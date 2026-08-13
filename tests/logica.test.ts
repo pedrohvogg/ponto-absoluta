@@ -12,7 +12,7 @@ import {
   somaDias,
 } from "../src/lib/datas";
 import { calcularJornada, proximoTipo, situacaoAtual, totalizar, validarSequencia } from "../src/lib/jornada";
-import { distanciaMetros } from "../src/lib/geo";
+import { dentroDaCerca, distanciaMetros, MARGEM_GPS_MAXIMA } from "../src/lib/geo";
 import { descriptorValido, distanciaEuclidiana, melhorDistancia } from "../src/lib/face";
 
 const FUSO = "America/Sao_Paulo";
@@ -257,6 +257,41 @@ describe("geolocalização", () => {
 
   it("devolve zero para o mesmo ponto", () => {
     assert.equal(distanciaMetros(-23.5, -46.6, -23.5, -46.6), 0);
+  });
+});
+
+describe("cerca virtual", () => {
+  const RAIO = 150;
+
+  it("aceita quem está dentro do raio", () => {
+    assert.equal(dentroDaCerca(0, RAIO, 10), true);
+    assert.equal(dentroDaCerca(100, RAIO, 10), true);
+    assert.equal(dentroDaCerca(RAIO, RAIO, 0), true);
+  });
+
+  it("bloqueia quem está fora do raio", () => {
+    assert.equal(dentroDaCerca(RAIO + 1, RAIO, 0), false);
+    assert.equal(dentroDaCerca(5000, RAIO, 10), false);
+  });
+
+  it("desconta a imprecisão do GPS a favor do funcionário", () => {
+    // 200 m de distância com ±80 m de erro: pode estar a 120 m, dentro do raio.
+    assert.equal(dentroDaCerca(200, RAIO, 80), true);
+  });
+
+  it("limita a margem do GPS para que não seja usada como brecha", () => {
+    // A precisão vem do navegador e poderia ser forjada; o teto impede que
+    // declarar um erro enorme libere a batida de qualquer lugar.
+    assert.equal(dentroDaCerca(5000, RAIO, 99999), false);
+    assert.equal(dentroDaCerca(RAIO + MARGEM_GPS_MAXIMA, RAIO, 99999), true);
+    assert.equal(dentroDaCerca(RAIO + MARGEM_GPS_MAXIMA + 1, RAIO, 99999), false);
+  });
+
+  it("trata precisão ausente ou negativa como zero", () => {
+    assert.equal(dentroDaCerca(200, RAIO, null), false);
+    assert.equal(dentroDaCerca(200, RAIO, undefined), false);
+    assert.equal(dentroDaCerca(200, RAIO, -500), false);
+    assert.equal(dentroDaCerca(100, RAIO, -500), true);
   });
 });
 
