@@ -63,6 +63,27 @@ O seed cria o administrador com os dados de `ADMIN_EMAIL` / `ADMIN_SENHA`
 (padrão `admin@empresa.com` / `admin123`). **O sistema exige a troca da senha no
 primeiro login.**
 
+### Configurar o local da empresa
+
+A cerca virtual pode ser definida na tela **Configurações** ou já no `.env`, para
+que a instalação nasça configurada:
+
+```env
+EMPRESA_NOME="Comércio Absoluta"
+EMPRESA_LATITUDE="-23.550520"
+EMPRESA_LONGITUDE="-46.633308"
+EMPRESA_RAIO_METROS="150"
+EMPRESA_GEOFENCE_BLOQUEIA="false"   # "true" impede o registro fora do raio
+```
+
+Preencher latitude e longitude já liga a cerca. Para descobrir as coordenadas:
+abra o Google Maps, clique com o botão direito sobre o ponto exato da loja e
+clique nos números no topo do menu — isso copia `latitude, longitude`.
+
+Rodar `npm run db:seed` de novo aplica os valores presentes no `.env` e
+**preserva** o que não estiver definido lá, para não desfazer ajustes feitos
+pela tela.
+
 ### Dados de demonstração (opcional)
 
 ```bash
