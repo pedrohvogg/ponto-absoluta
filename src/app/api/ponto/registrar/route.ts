@@ -98,7 +98,9 @@ export async function POST(req: Request) {
     if (dados.latitude == null || dados.longitude == null) {
       return NextResponse.json(
         {
-          erro: "Precisamos da sua localização para registrar o ponto. Autorize o acesso à localização no navegador.",
+          erro:
+            "Precisamos da sua localização para registrar o ponto. Autorize o acesso à localização no navegador " +
+            "e verifique se o GPS do aparelho está ligado.",
           acao: "PERMITIR_LOCALIZACAO",
         },
         { status: 400 },
@@ -125,7 +127,10 @@ export async function POST(req: Request) {
       });
       return NextResponse.json(
         {
-          erro: `Você está a ${distanciaDaEmpresa} m do local de trabalho (limite: ${config.raioMetros} m). O registro só é permitido no local.`,
+          erro:
+            `Você está a ${distanciaDaEmpresa} m do local de trabalho (limite: ${config.raioMetros} m) e o registro só é permitido no local. ` +
+            "Se você já está no trabalho, o GPS pode ter errado: saia de perto de paredes/coberturas e tente de novo. " +
+            "Persistindo, avise o responsável — a tentativa já apareceu no painel dele e o ponto pode ser lançado manualmente.",
         },
         { status: 403 },
       );
