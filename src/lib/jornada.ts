@@ -88,13 +88,15 @@ export function calcularJornada(
   const diaUtil = usuario.diasSemana.includes(diaSemanaNumero(dia));
   const previsto = diaUtil ? usuario.cargaDiariaMinutos : 0;
 
-  const primeira = ordenados.find((r) => r.tipo === "ENTRADA") ?? ordenados[0];
+  // Só uma ENTRADA de verdade serve de referência: em um dia com a sequência
+  // quebrada (ex.: só a saída foi batida) não existe atraso a apurar.
+  const primeiraEntradaReg = ordenados.find((r) => r.tipo === "ENTRADA");
   const ultimaSaidaReg = [...ordenados].reverse().find((r) => r.tipo === "SAIDA");
 
   let atrasoMinutos = 0;
-  if (diaUtil && primeira) {
+  if (diaUtil && primeiraEntradaReg) {
     const previstoMin = horaParaMinutos(usuario.entradaPrevista);
-    const realMin = minutosDoDia(primeira.momento, fuso);
+    const realMin = minutosDoDia(primeiraEntradaReg.momento, fuso);
     const diff = realMin - previstoMin;
     if (diff > toleranciaMinutos) atrasoMinutos = diff;
   }
@@ -110,7 +112,7 @@ export function calcularJornada(
     extras: Math.max(0, saldo),
     devendo: Math.max(0, -saldo),
     atrasoMinutos,
-    primeiraEntrada: primeira ? horaDe(primeira.momento, fuso) : null,
+    primeiraEntrada: primeiraEntradaReg ? horaDe(primeiraEntradaReg.momento, fuso) : null,
     ultimaSaida: ultimaSaidaReg ? horaDe(ultimaSaidaReg.momento, fuso) : null,
     emAndamento,
     inconsistente,

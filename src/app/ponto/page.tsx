@@ -90,11 +90,17 @@ export default async function PaginaPonto() {
         <div className="grid grid-cols-3 gap-3">
           <Indicador titulo="Entrada" valor={jornada.primeiraEntrada ?? "—"} />
           <Indicador titulo="Intervalo" valor={minutosParaHoras(jornada.intervalo)} />
-          <Indicador
-            titulo="Saldo do dia"
-            valor={minutosParaHoras(jornada.saldo)}
-            cor={jornada.saldo >= 0 ? "text-emerald-600" : "text-red-600"}
-          />
+          {/* Antes da primeira batida, o saldo seria a jornada inteira negativa —
+              mostrar o previsto do dia comunica melhor. */}
+          {registros.length === 0 ? (
+            <Indicador titulo="Previsto hoje" valor={minutosParaHoras(jornada.previsto)} />
+          ) : (
+            <Indicador
+              titulo="Saldo do dia"
+              valor={minutosParaHoras(jornada.saldo)}
+              cor={jornada.saldo >= 0 ? "text-emerald-600" : "text-red-600"}
+            />
+          )}
         </div>
 
         <Link

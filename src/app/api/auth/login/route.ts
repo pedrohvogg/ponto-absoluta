@@ -36,8 +36,15 @@ export async function POST(req: Request) {
     }
   }
 
+  // E-mail é gravado em minúsculas e a matrícula em maiúsculas, então o
+  // identificador digitado é comparado nas duas formas.
   const usuario = await prisma.usuario.findFirst({
-    where: { OR: [{ email: identificador }, { matricula: identificador }] },
+    where: {
+      OR: [
+        { email: identificador },
+        { matricula: dados.data.identificador.trim().toUpperCase() },
+      ],
+    },
   });
 
   const generico = { erro: "E-mail/matrícula ou senha incorretos." };
