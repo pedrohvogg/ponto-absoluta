@@ -11,7 +11,8 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
     "test": "node --import tsx --test tests/*.test.ts",
-    "db:demo": "tsx prisma/demo.ts"
+    "db:demo": "tsx prisma/demo.ts",
+    "setup": "prisma db push && tsx prisma/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
@@ -33,5 +34,8 @@
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.12",
     "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

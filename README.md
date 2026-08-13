@@ -46,10 +46,12 @@ Requisitos: Node.js 20+ e um PostgreSQL (local, Supabase, Neon, Railway…).
 ```bash
 npm install
 cp .env.example .env      # preencha DATABASE_URL e SESSION_SECRET
-npx prisma db push        # cria as tabelas
-npm run db:seed           # cria o primeiro administrador
+npm run setup             # cria as tabelas e o primeiro administrador
 npm run dev               # http://localhost:3000
 ```
+
+`npm run setup` pode ser executado quantas vezes for preciso: ele não apaga
+dados, apenas garante que as tabelas existam e aplica a configuração do `.env`.
 
 Gere uma chave de sessão segura com:
 
@@ -101,6 +103,7 @@ pendente, para conhecer as telas com o sistema populado. Senha de todos:
 | `npm run dev` | Ambiente de desenvolvimento |
 | `npm run build` / `npm start` | Build e execução em produção |
 | `npm test` | Testes da lógica de jornada, fuso horário, geolocalização e comparação facial |
+| `npm run setup` | Primeira instalação: cria as tabelas e o administrador |
 | `npm run db:push` | Aplica o schema no banco |
 | `npm run db:seed` | Cria configuração inicial e administrador |
 | `npm run db:demo` | Popula dados de demonstração |
