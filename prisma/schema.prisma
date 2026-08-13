@@ -1,0 +1,200 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Papel {
+  ADMIN
+  FUNCIONARIO
+}
+
+enum TipoRegistro {
+  ENTRADA
+  INICIO_INTERVALO
+  FIM_INTERVALO
+  SAIDA
+}
+
+enum OrigemRegistro {
+  FACIAL // batido pelo proprio funcionario com validacao facial
+  MANUAL // lancado diretamente por um administrador
+  AJUSTE // criado pela aprovacao de uma solicitacao de ajuste
+}
+
+enum StatusSolicitacao {
+  PENDENTE
+  APROVADA
+  REJEITADA
+}
+
+enum AcaoSolicitacao {
+  INCLUIR
+  ALTERAR
+  EXCLUIR
+}
+
+model Usuario {
+  id        String  @id @default(cuid())
+  nome      String
+  email     String  @unique
+  matricula String  @unique
+  senhaHash String
+  papel     Papel   @default(FUNCIONARIO)
+  ativo     Boolean @default(true)
+
+  cargo        String?
+  departamento String?
+
+  /// Precisa trocar a senha no proximo login (senha provisoria do admin).
+  trocarSenha Boolean @default(true)
+
+  // ---- Jornada de trabalho ----
+  /// Minutos de trabalho previstos por dia (ex.: 480 = 8h).
+  cargaDiariaMinutos Int    @default(480)
+  /// Horario previsto de entrada no formato HH:mm.
+  entradaPrevista    String @default("08:00")
+  /// Horario previsto de saida no formato HH:mm.
+  saidaPrevista      String @default("17:00")
+  /// Minutos previstos de intervalo (almoco).
+  intervaloMinutos   Int    @default(60)
+  /// Dias da semana trabalhados (0=domingo ... 6=sabado).
+  diasSemana         Int[]  @default([1, 2, 3, 4, 5])
+
+  ultimoLogin DateTime?
+  criadoEm    DateTime  @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  biometrias    Biometria[]
+  registros     Registro[]      @relation("RegistrosDoUsuario")
+  registrosFeitos Registro[]    @relation("RegistrosLancadosPor")
+  solicitacoes  Solicitacao[]   @relation("SolicitacoesDoUsuario")
+  revisoes      Solicitacao[]   @relation("SolicitacoesRevisadasPor")
+  auditoria     Auditoria[]
+
+  @@index([papel, ativo])
+}
+
+/// Assinatura facial (descriptor de 128 dimensoes gerado pelo face-api no navegador).
+/// A imagem original nunca e persistida aqui: guardamos apenas o vetor.
+model Biometria {
+  id         String  @id @default(cuid())
+  usuarioId  String
+  usuario    Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  /// 128 numeros float serializados como JSON.
+  descriptor Json
+  /// Miniatura JPEG capturada no cadastro, para conferencia visual do admin.
+  fotoBase64 String? @db.Text
+  criadoEm   DateTime @default(now())
+
+  @@index([usuarioId])
+}
+
+model Registro {
+  id        String       @id @default(cuid())
+  usuarioId String
+  usuario   Usuario      @relation("RegistrosDoUsuario", fields: [usuarioId], references: [id], onDelete: Cascade)
+  tipo      TipoRegistro
+  /// Momento do registro (UTC).
+  momento   DateTime
+  /// Dia de competencia no formato YYYY-MM-DD (fuso da empresa), usado para agrupar a jornada.
+  dia       String
+  origem    OrigemRegistro @default(FACIAL)
+
+  // ---- Validacao facial ----
+  /// Distancia euclidiana entre o rosto capturado e a biometria cadastrada (menor = melhor).
+  faceDistancia Float?
+  fotoBase64    String? @db.Text
+
+  // ---- Geolocalizacao ----
+  latitude       Float?
+  longitude      Float?
+  precisaoMetros Float?
+  distanciaMetros Float?
+  dentroDaCerca  Boolean?
+
+  observacao   String?
+  ip           String?
+  userAgent    String?
+  lancadoPorId String?
+  lancadoPor   Usuario? @relation("RegistrosLancadosPor", fields: [lancadoPorId], references: [id], onDelete: SetNull)
+
+  criadoEm DateTime @default(now())
+
+  @@index([usuarioId, dia])
+  @@index([dia])
+  @@index([momento])
+}
+
+model Solicitacao {
+  id        String  @id @default(cuid())
+  usuarioId String
+  usuario   Usuario @relation("SolicitacoesDoUsuario", fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  acao AcaoSolicitacao @default(INCLUIR)
+  /// Dia de competencia (YYYY-MM-DD).
+  dia  String
+  tipo TipoRegistro
+  /// Horario pedido no formato HH:mm (nulo quando a acao e EXCLUIR).
+  horario String?
+  /// Registro alvo quando a acao e ALTERAR ou EXCLUIR.
+  registroAlvoId String?
+
+  motivo String @db.Text
+  status StatusSolicitacao @default(PENDENTE)
+
+  respostaAdmin String?   @db.Text
+  revisadoPorId String?
+  revisadoPor   Usuario?  @relation("SolicitacoesRevisadasPor", fields: [revisadoPorId], references: [id], onDelete: SetNull)
+  revisadoEm    DateTime?
+
+  criadoEm DateTime @default(now())
+
+  @@index([status])
+  @@index([usuarioId, dia])
+}
+
+/// Parametros globais da empresa (linha unica, id = "default").
+model Config {
+  id          String @id @default("default")
+  nomeEmpresa String @default("Minha Empresa")
+  /// Fuso horario IANA usado para calcular o dia de competencia e exibir horarios.
+  fusoHorario String @default("America/Sao_Paulo")
+
+  // ---- Cerca virtual ----
+  geofenceAtiva   Boolean @default(false)
+  /// Bloqueia o registro fora do raio (quando falso, apenas sinaliza para o admin).
+  geofenceBloqueia Boolean @default(false)
+  latitude        Float?
+  longitude       Float?
+  raioMetros      Int     @default(200)
+
+  // ---- Biometria facial ----
+  /// Distancia maxima aceita entre o rosto capturado e a biometria (0.4 rigido, 0.6 tolerante).
+  limiarFacial   Float   @default(0.5)
+  /// Guardar a selfie do registro como comprovante para o admin.
+  salvarFoto     Boolean @default(true)
+  /// Intervalo minimo entre dois registros do mesmo funcionario, em minutos.
+  intervaloMinimoMinutos Int @default(1)
+
+  // ---- Jornada ----
+  /// Tolerancia em minutos para atraso/saida antecipada.
+  toleranciaMinutos Int @default(10)
+
+  atualizadoEm DateTime @updatedAt @default(now())
+}
+
+model Auditoria {
+  id        String   @id @default(cuid())
+  usuarioId String?
+  usuario   Usuario? @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
+  acao      String
+  detalhe   String?  @db.Text
+  ip        String?
+  criadoEm  DateTime @default(now())
+
+  @@index([criadoEm])
+}

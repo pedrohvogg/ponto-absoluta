@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+@theme {
+  --color-marca-50: #eef6ff;
+  --color-marca-100: #d9ebff;
+  --color-marca-200: #bcdcff;
+  --color-marca-300: #8ec6ff;
+  --color-marca-400: #59a6ff;
+  --color-marca-500: #3383fb;
+  --color-marca-600: #1d63f0;
+  --color-marca-700: #164edc;
+  --color-marca-800: #1841b2;
+  --color-marca-900: #1a3b8c;
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-slate-100 text-slate-900 antialiased;
+}
+
+/* ---- Componentes recorrentes ---- */
+@utility cartao {
+  @apply rounded-xl border border-slate-200 bg-white shadow-sm;
+}
+
+@utility rotulo {
+  @apply mb-1 block text-sm font-medium text-slate-700;
+}
+
+@utility campo {
+  @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-marca-500 focus:ring-2 focus:ring-marca-200 disabled:bg-slate-100 disabled:text-slate-500;
+}
+
+@utility botao {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60;
+}
+
+@utility botao-primario {
+  @apply botao bg-marca-600 text-white hover:bg-marca-700 active:bg-marca-800;
+}
+
+@utility botao-secundario {
+  @apply botao border border-slate-300 bg-white text-slate-700 hover:bg-slate-50;
+}
+
+@utility botao-perigo {
+  @apply botao border border-red-200 bg-red-50 text-red-700 hover:bg-red-100;
+}
+
+@utility etiqueta {
+  @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium;
+}
+
+/* ---- Impressao do espelho de ponto ---- */
+@media print {
+  .nao-imprimir {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+  .cartao,
+  .rounded-xl {
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: none !important;
+  }
+  @page {
+    margin: 12mm;
+    size: A4;
+  }
+}
