@@ -1,0 +1,47 @@
+import "server-only";
+import { redirect } from "next/navigation";
+import { prisma } from "./prisma";
+import { lerSessao, type Sessao } from "./sessao";
+
+/** Garante que existe uma sessao valida e que o usuario continua ativo no banco. */
+export async function exigirUsuario(): Promise<Sessao> {
+  const sessao = await lerSessao();
+  if (!sessao) redirect("/login");
+
+  const usuario = await prisma.usuario.findUnique({
+    where: { id: sessao.id },
+    select: { ativo: true, papel: true, trocarSenha: true },
+  });
+  if (!usuario || !usuario.ativo) redirect("/login?erro=inativo");
+
+  return { ...sessao, papel: usuario.papel, trocarSenha: usuario.trocarSenha };
+}
+
+export async function exigirAdmin(): Promise<Sessao> {
+  const sessao = await exigirUsuario();
+  if (sessao.papel !== "ADMIN") redirect("/ponto");
+  return sessao;
+}
+
+export async function exigirFuncionario(): Promise<Sessao> {
+  const sessao = await exigirUsuario();
+  if (sessao.papel === "ADMIN") redirect("/admin");
+  return sessao;
+}
+
+/** Versao para rotas de API: devolve null em vez de redirecionar. */
+export async function usuarioDaApi(): Promise<Sessao | null> {
+  const sessao = await lerSessao();
+  if (!sessao) return null;
+  const usuario = await prisma.usuario.findUnique({
+    where: { id: sessao.id },
+    select: { ativo: true, papel: true, trocarSenha: true },
+  });
+  if (!usuario || !usuario.ativo) return null;
+  return { ...sessao, papel: usuario.papel, trocarSenha: usuario.trocarSenha };
+}
+
+export async function adminDaApi(): Promise<Sessao | null> {
+  const sessao = await usuarioDaApi();
+  return sessao?.papel === "ADMIN" ? sessao : null;
+}

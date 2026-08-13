@@ -1,0 +1,289 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  diaDe,
+  horaDe,
+  intervaloDeDias,
+  limitesDoDia,
+  limitesDoMes,
+  minutosParaHoras,
+  paraUtc,
+  somaDias,
+} from "../src/lib/datas";
+import { calcularJornada, proximoTipo, situacaoAtual, totalizar, validarSequencia } from "../src/lib/jornada";
+import { distanciaMetros } from "../src/lib/geo";
+import { descriptorValido, distanciaEuclidiana, melhorDistancia } from "../src/lib/face";
+
+const FUSO = "America/Sao_Paulo";
+const JORNADA_PADRAO = {
+  cargaDiariaMinutos: 480,
+  entradaPrevista: "08:00",
+  diasSemana: [1, 2, 3, 4, 5],
+};
+const OPCOES = { fuso: FUSO, toleranciaMinutos: 10 };
+
+/** Ajuda a montar batidas no fuso da empresa. */
+function batida(tipo: "ENTRADA" | "INICIO_INTERVALO" | "FIM_INTERVALO" | "SAIDA", dia: string, hora: string) {
+  return { tipo, momento: paraUtc(dia, hora, FUSO) } as const;
+}
+
+describe("datas — conversão de fuso", () => {
+  it("converte hora local para UTC no horário padrão de Brasília (UTC-3)", () => {
+    const utc = paraUtc("2026-08-13", "08:00", FUSO);
+    assert.equal(utc.toISOString(), "2026-08-13T11:00:00.000Z");
+  });
+
+  it("faz o caminho de volta preservando dia e hora", () => {
+    const utc = paraUtc("2026-08-13", "23:30", FUSO);
+    assert.equal(diaDe(utc, FUSO), "2026-08-13");
+    assert.equal(horaDe(utc, FUSO), "23:30");
+  });
+
+  it("mantém a competência correta para batidas depois da meia-noite UTC", () => {
+    // 22h em São Paulo já é o dia seguinte em UTC.
+    const utc = paraUtc("2026-08-13", "22:00", FUSO);
+    assert.equal(utc.toISOString(), "2026-08-14T01:00:00.000Z");
+    assert.equal(diaDe(utc, FUSO), "2026-08-13");
+  });
+
+  it("delimita o dia local em 24 horas", () => {
+    const { inicio, fim } = limitesDoDia("2026-08-13", FUSO);
+    assert.equal(inicio.toISOString(), "2026-08-13T03:00:00.000Z");
+    assert.equal(fim.toISOString(), "2026-08-14T03:00:00.000Z");
+  });
+
+  it("formata minutos como HH:mm, inclusive negativos", () => {
+    assert.equal(minutosParaHoras(495), "08:15");
+    assert.equal(minutosParaHoras(-30), "-00:30");
+    assert.equal(minutosParaHoras(0), "00:00");
+  });
+
+  it("navega entre dias e meses", () => {
+    assert.equal(somaDias("2026-02-28", 1), "2026-03-01");
+    assert.equal(somaDias("2026-01-01", -1), "2025-12-31");
+    assert.deepEqual(limitesDoMes("2026-02-10"), { de: "2026-02-01", ate: "2026-02-28" });
+    assert.equal(intervaloDeDias("2026-08-01", "2026-08-31").length, 31);
+  });
+});
+
+describe("jornada — cálculo do dia", () => {
+  it("soma o tempo trabalhado descontando o intervalo", () => {
+    const j = calcularJornada(
+      "2026-08-13",
+      [
+        batida("ENTRADA", "2026-08-13", "08:00"),
+        batida("INICIO_INTERVALO", "2026-08-13", "12:00"),
+        batida("FIM_INTERVALO", "2026-08-13", "13:00"),
+        batida("SAIDA", "2026-08-13", "17:00"),
+      ],
+      JORNADA_PADRAO,
+      OPCOES,
+    );
+    assert.equal(j.trabalhado, 480);
+    assert.equal(j.intervalo, 60);
+    assert.equal(j.saldo, 0);
+    assert.equal(j.emAndamento, false);
+    assert.equal(j.inconsistente, false);
+    assert.equal(j.primeiraEntrada, "08:00");
+    assert.equal(j.ultimaSaida, "17:00");
+  });
+
+  it("apura horas extras", () => {
+    const j = calcularJornada(
+      "2026-08-13",
+      [batida("ENTRADA", "2026-08-13", "08:00"), batida("SAIDA", "2026-08-13", "18:30")],
+      JORNADA_PADRAO,
+      OPCOES,
+    );
+    assert.equal(j.trabalhado, 630);
+    assert.equal(j.extras, 150);
+    assert.equal(j.devendo, 0);
+  });
+
+  it("respeita a tolerância antes de marcar atraso", () => {
+    const noLimite = calcularJornada(
+      "2026-08-13",
+      [batida("ENTRADA", "2026-08-13", "08:10")],
+      JORNADA_PADRAO,
+      OPCOES,
+    );
+    assert.equal(noLimite.atrasoMinutos, 0);
+
+    const atrasado = calcularJornada(
+      "2026-08-13",
+      [batida("ENTRADA", "2026-08-13", "08:25")],
+      JORNADA_PADRAO,
+      OPCOES,
+    );
+    assert.equal(atrasado.atrasoMinutos, 25);
+  });
+
+  it("não aponta atraso em dia sem entrada registrada", () => {
+    // Só a saída foi batida: não há hora de entrada para comparar.
+    const j = calcularJornada(
+      "2026-08-10",
+      [batida("SAIDA", "2026-08-10", "18:00")],
+      JORNADA_PADRAO,
+      OPCOES,
+    );
+    assert.equal(j.atrasoMinutos, 0);
+    assert.equal(j.primeiraEntrada, null);
+    assert.equal(j.inconsistente, true);
+  });
+
+  it("não gera tempo fantasma quando falta a saída", () => {
+    const j = calcularJornada(
+      "2026-08-13",
+      [batida("ENTRADA", "2026-08-13", "08:00")],
+      JORNADA_PADRAO,
+      OPCOES,
+    );
+    assert.equal(j.trabalhado, 0);
+    assert.equal(j.emAndamento, true);
+    assert.equal(j.devendo, 480);
+  });
+
+  it("sinaliza sequência inconsistente com duas entradas seguidas", () => {
+    const j = calcularJornada(
+      "2026-08-13",
+      [batida("ENTRADA", "2026-08-13", "08:00"), batida("ENTRADA", "2026-08-13", "09:00")],
+      JORNADA_PADRAO,
+      OPCOES,
+    );
+    assert.equal(j.inconsistente, true);
+  });
+
+  it("ordena batidas fora de ordem antes de calcular", () => {
+    const j = calcularJornada(
+      "2026-08-13",
+      [batida("SAIDA", "2026-08-13", "17:00"), batida("ENTRADA", "2026-08-13", "09:00")],
+      JORNADA_PADRAO,
+      OPCOES,
+    );
+    assert.equal(j.trabalhado, 480);
+    assert.equal(j.inconsistente, false);
+  });
+
+  it("não cobra jornada em dia não útil", () => {
+    // 2026-08-15 é um sábado.
+    const j = calcularJornada("2026-08-15", [], JORNADA_PADRAO, OPCOES);
+    assert.equal(j.diaUtil, false);
+    assert.equal(j.previsto, 0);
+    assert.equal(j.saldo, 0);
+  });
+
+  it("conta como extra o trabalho em dia não útil", () => {
+    const j = calcularJornada(
+      "2026-08-15",
+      [batida("ENTRADA", "2026-08-15", "09:00"), batida("SAIDA", "2026-08-15", "13:00")],
+      JORNADA_PADRAO,
+      OPCOES,
+    );
+    assert.equal(j.extras, 240);
+  });
+
+  it("totaliza um período", () => {
+    const dias = ["2026-08-10", "2026-08-11"].map((d) =>
+      calcularJornada(
+        d,
+        [batida("ENTRADA", d, "08:00"), batida("SAIDA", d, "17:00")],
+        JORNADA_PADRAO,
+        OPCOES,
+      ),
+    );
+    const t = totalizar(dias);
+    assert.equal(t.trabalhado, 1080);
+    assert.equal(t.previsto, 960);
+    assert.equal(t.saldo, 120);
+    assert.equal(t.diasTrabalhados, 2);
+  });
+});
+
+describe("jornada — sequência de batidas", () => {
+  it("sugere a próxima batida", () => {
+    assert.equal(proximoTipo([]), "ENTRADA");
+    assert.equal(proximoTipo([batida("ENTRADA", "2026-08-13", "08:00")]), "INICIO_INTERVALO");
+    assert.equal(
+      proximoTipo([
+        batida("ENTRADA", "2026-08-13", "08:00"),
+        batida("INICIO_INTERVALO", "2026-08-13", "12:00"),
+      ]),
+      "FIM_INTERVALO",
+    );
+  });
+
+  it("bloqueia transições impossíveis", () => {
+    assert.equal(validarSequencia(null, "ENTRADA"), null);
+    assert.notEqual(validarSequencia(null, "SAIDA"), null);
+    assert.notEqual(validarSequencia("ENTRADA", "ENTRADA"), null);
+    assert.notEqual(validarSequencia("ENTRADA", "FIM_INTERVALO"), null);
+    assert.equal(validarSequencia("INICIO_INTERVALO", "FIM_INTERVALO"), null);
+    assert.notEqual(validarSequencia("INICIO_INTERVALO", "SAIDA"), null);
+    assert.equal(validarSequencia("SAIDA", "ENTRADA"), null);
+  });
+
+  it("descreve a situação atual", () => {
+    assert.equal(situacaoAtual([]), "FORA");
+    assert.equal(situacaoAtual([batida("ENTRADA", "2026-08-13", "08:00")]), "TRABALHANDO");
+    assert.equal(
+      situacaoAtual([
+        batida("ENTRADA", "2026-08-13", "08:00"),
+        batida("INICIO_INTERVALO", "2026-08-13", "12:00"),
+      ]),
+      "INTERVALO",
+    );
+  });
+});
+
+describe("geolocalização", () => {
+  it("mede 1 grau de latitude como ~111,2 km", () => {
+    const d = distanciaMetros(-23.5, -46.6, -22.5, -46.6);
+    assert.ok(Math.abs(d - 111195) < 500, `esperava ~111,2 km, veio ${d} m`);
+  });
+
+  it("encurta 1 grau de longitude pelo cosseno da latitude", () => {
+    // Na latitude de São Paulo (~23,5°), 1° de longitude ≈ 111,2 km × cos(23,5°).
+    const esperado = 111195 * Math.cos((23.5 * Math.PI) / 180);
+    const d = distanciaMetros(-23.5, -46.6, -23.5, -45.6);
+    assert.ok(Math.abs(d - esperado) < 500, `esperava ~${Math.round(esperado)} m, veio ${d} m`);
+  });
+
+  it("mede distâncias curtas no tamanho de uma cerca virtual", () => {
+    // 0,001° de latitude ≈ 111 m — a ordem de grandeza usada no geofence.
+    const d = distanciaMetros(-23.5, -46.6, -23.501, -46.6);
+    assert.ok(d > 105 && d < 118, `esperava ~111 m, veio ${d} m`);
+  });
+
+  it("devolve zero para o mesmo ponto", () => {
+    assert.equal(distanciaMetros(-23.5, -46.6, -23.5, -46.6), 0);
+  });
+});
+
+describe("comparação facial", () => {
+  const base = Array.from({ length: 128 }, (_, i) => Math.sin(i) / 4);
+
+  it("valida o formato do descriptor", () => {
+    assert.equal(descriptorValido(base), true);
+    assert.equal(descriptorValido(base.slice(0, 100)), false);
+    assert.equal(descriptorValido("nao é array"), false);
+    assert.equal(descriptorValido([...base.slice(1), Number.NaN]), false);
+  });
+
+  it("dá distância zero para o mesmo rosto", () => {
+    assert.equal(distanciaEuclidiana(base, base), 0);
+  });
+
+  it("escolhe a biometria mais próxima entre as cadastradas", () => {
+    const parecido = base.map((v) => v + 0.01);
+    const diferente = base.map((v) => v + 0.5);
+    const melhor = melhorDistancia(base, [diferente, parecido]);
+    assert.ok(melhor !== null && melhor < 0.2, `esperava distância pequena, veio ${melhor}`);
+  });
+
+  it("reprova rosto distante do cadastrado", () => {
+    const outro = base.map((v, i) => v + (i % 2 ? 0.4 : -0.4));
+    const d = melhorDistancia(outro, [base]);
+    assert.ok(d !== null && d > 0.5, `esperava distância grande, veio ${d}`);
+  });
+});
