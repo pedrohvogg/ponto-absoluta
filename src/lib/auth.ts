@@ -3,6 +3,11 @@ import { redirect } from "next/navigation";
 import { prisma } from "./prisma";
 import { lerSessao, type Sessao } from "./sessao";
 
+/** ADMIN nao bate ponto, entao o termo de biometria nao se aplica a esse papel. */
+function precisaAceitarTermo(papel: string, termoAceiteEm: Date | null): boolean {
+  return papel === "FUNCIONARIO" && termoAceiteEm === null;
+}
+
 /** Garante que existe uma sessao valida e que o usuario continua ativo no banco. */
 export async function exigirUsuario(): Promise<Sessao> {
   const sessao = await lerSessao();
@@ -10,11 +15,16 @@ export async function exigirUsuario(): Promise<Sessao> {
 
   const usuario = await prisma.usuario.findUnique({
     where: { id: sessao.id },
-    select: { ativo: true, papel: true, trocarSenha: true },
+    select: { ativo: true, papel: true, trocarSenha: true, termoAceiteEm: true },
   });
   if (!usuario || !usuario.ativo) redirect("/login?erro=inativo");
 
-  return { ...sessao, papel: usuario.papel, trocarSenha: usuario.trocarSenha };
+  return {
+    ...sessao,
+    papel: usuario.papel,
+    trocarSenha: usuario.trocarSenha,
+    termoAceito: !precisaAceitarTermo(usuario.papel, usuario.termoAceiteEm),
+  };
 }
 
 export async function exigirAdmin(): Promise<Sessao> {
@@ -35,10 +45,15 @@ export async function usuarioDaApi(): Promise<Sessao | null> {
   if (!sessao) return null;
   const usuario = await prisma.usuario.findUnique({
     where: { id: sessao.id },
-    select: { ativo: true, papel: true, trocarSenha: true },
+    select: { ativo: true, papel: true, trocarSenha: true, termoAceiteEm: true },
   });
   if (!usuario || !usuario.ativo) return null;
-  return { ...sessao, papel: usuario.papel, trocarSenha: usuario.trocarSenha };
+  return {
+    ...sessao,
+    papel: usuario.papel,
+    trocarSenha: usuario.trocarSenha,
+    termoAceito: !precisaAceitarTermo(usuario.papel, usuario.termoAceiteEm),
+  };
 }
 
 export async function adminDaApi(): Promise<Sessao | null> {

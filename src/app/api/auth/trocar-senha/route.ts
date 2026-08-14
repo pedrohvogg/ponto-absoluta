@@ -42,10 +42,10 @@ export async function POST(req: Request) {
   });
 
   // Refaz o cookie para limpar a marca de "trocar senha".
+  // sessao.termoAceito ja reflete o estado atual do banco (usuarioDaApi confere na hora).
   await criarSessao({ ...sessao, trocarSenha: false });
 
-  return NextResponse.json({
-    ok: true,
-    destino: sessao.papel === "ADMIN" ? "/admin" : "/ponto",
-  });
+  const destino = !sessao.termoAceito ? "/termos" : sessao.papel === "ADMIN" ? "/admin" : "/ponto";
+
+  return NextResponse.json({ ok: true, destino });
 }

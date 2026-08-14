@@ -12,6 +12,9 @@ export type Sessao = {
   email: string;
   papel: Papel;
   trocarSenha: boolean;
+  /// Falso apenas quando o usuario e FUNCIONARIO e ainda nao aceitou o termo
+  /// de uso de imagem/biometria. Para ADMIN vale sempre true (nao se aplica).
+  termoAceito: boolean;
 };
 
 function chave(): Uint8Array {
@@ -51,6 +54,7 @@ export async function lerSessao(): Promise<Sessao | null> {
       email: String(payload.email),
       papel: payload.papel as Papel,
       trocarSenha: Boolean(payload.trocarSenha),
+      termoAceito: Boolean(payload.termoAceito),
     };
   } catch {
     return null;

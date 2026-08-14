@@ -182,15 +182,25 @@ A margem de erro do GPS é sempre descontada a favor do funcionário.
 
 ### LGPD
 
-Dado biométrico é **dado pessoal sensível** (art. 5º, II da LGPD). Antes de usar em
-produção você precisa, no mínimo:
+Dado biométrico é **dado pessoal sensível** (art. 5º, II da LGPD). O sistema já cobre:
 
-1. Colher **consentimento específico e destacado** de cada funcionário, informando
-   finalidade e tempo de guarda (a tela "Meu rosto" já explica o tratamento, mas o
-   aceite formal é responsabilidade da empresa).
-2. Oferecer **alternativa** a quem não consentir (ex.: registro manual pelo gestor,
-   já suportado em Registros → Lançar ponto manualmente).
-3. Definir política de retenção e exclusão dos vetores e das fotos de comprovação.
+1. **Consentimento específico e destacado**: no primeiro acesso após a troca de
+   senha, todo funcionário passa pela tela `/termos` — um termo cobrindo finalidade,
+   base legal (CLT art. 74 §2º e Portaria MTP 671/2021), como o dado é armazenado
+   (vetor matemático, não a foto), tempo de guarda e não compartilhamento — e só
+   segue em frente ao marcar "Li e concordo" e clicar em aceitar. O aceite é
+   registrado com data/hora no cadastro do funcionário e na auditoria
+   (`TERMO_IMAGEM_ACEITO`), uma única vez. O texto está em `src/lib/termoUso.ts`.
+2. **Alternativa para quem não consentir**: o funcionário pode recusar o
+   reconhecimento facial sem perder o emprego — o gestor lança o ponto manualmente
+   em Registros → Lançar ponto manualmente.
+3. **Retenção e exclusão** — parcialmente automatizada: o admin pode apagar o
+   cadastro facial de um funcionário a qualquer momento (Funcionário → Limpar
+   cadastro facial), mas isso **não acontece automaticamente** ao desativar o
+   acesso. O termo promete a eliminação ao fim do vínculo — hoje isso depende do
+   admin lembrar de fazer essa limpeza manualmente no desligamento. Se quiser que
+   a desativação apague a biometria automaticamente, é uma mudança pequena a
+   pedir.
 
 Sobre a **Portaria 671/2021 do MTE**: este sistema é um controle de ponto por
 programa (REP-P). Um REP-P homologado exige requisitos formais adicionais —

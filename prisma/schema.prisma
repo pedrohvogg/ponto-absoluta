@@ -52,6 +52,11 @@ model Usuario {
   /// Precisa trocar a senha no proximo login (senha provisoria do admin).
   trocarSenha Boolean @default(true)
 
+  /// Momento em que o funcionario aceitou o termo de uso de imagem/biometria
+  /// facial (LGPD). Nulo ate o aceite; bloqueia o acesso enquanto nao preenchido.
+  /// Aplica-se apenas a quem tem papel FUNCIONARIO.
+  termoAceiteEm DateTime?
+
   // ---- Jornada de trabalho ----
   /// Minutos de trabalho previstos por dia (ex.: 480 = 8h).
   cargaDiariaMinutos Int    @default(480)

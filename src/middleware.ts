@@ -13,14 +13,14 @@ export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const token = req.cookies.get(COOKIE)?.value;
 
-  let sessao: { papel?: string; trocarSenha?: boolean } | null = null;
+  let sessao: { papel?: string; trocarSenha?: boolean; termoAceito?: boolean } | null = null;
   if (token && process.env.SESSION_SECRET) {
     try {
       const { payload } = await jwtVerify(
         token,
         new TextEncoder().encode(process.env.SESSION_SECRET),
       );
-      sessao = payload as { papel?: string; trocarSenha?: boolean };
+      sessao = payload as { papel?: string; trocarSenha?: boolean; termoAceito?: boolean };
     } catch {
       sessao = null;
     }
@@ -47,6 +47,20 @@ export async function middleware(req: NextRequest) {
     url.pathname = "/trocar-senha";
     url.search = "";
     return NextResponse.redirect(url);
+  }
+
+  // Termo de uso de imagem/biometria (LGPD): so avaliado depois que a senha ja
+  // esta definida, para os dois portoes serem sequenciais (senha -> termo -> app)
+  // em vez de simultaneos — senao o proprio endpoint de troca de senha ficaria
+  // bloqueado por um portao que so deveria valer depois dele.
+  if (!sessao.trocarSenha) {
+    const liberadasNoTermo = ["/termos", "/api/termos/aceitar", "/api/auth/logout"];
+    if (sessao.termoAceito === false && !liberadasNoTermo.includes(pathname)) {
+      const url = req.nextUrl.clone();
+      url.pathname = "/termos";
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
   }
 
   if (pathname.startsWith("/admin") && sessao.papel !== "ADMIN") {

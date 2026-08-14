@@ -64,12 +64,16 @@ export async function POST(req: Request) {
 
   zerarLimite(`login:conta:${identificador}`);
 
+  // ADMIN nao bate ponto, entao o termo de imagem/biometria nao se aplica.
+  const termoAceito = usuario.papel !== "FUNCIONARIO" || usuario.termoAceiteEm !== null;
+
   await criarSessao({
     id: usuario.id,
     nome: usuario.nome,
     email: usuario.email,
     papel: usuario.papel,
     trocarSenha: usuario.trocarSenha,
+    termoAceito,
   });
 
   await prisma.$transaction([
@@ -79,9 +83,11 @@ export async function POST(req: Request) {
 
   const destino = usuario.trocarSenha
     ? "/trocar-senha"
-    : usuario.papel === "ADMIN"
-      ? "/admin"
-      : "/ponto";
+    : !termoAceito
+      ? "/termos"
+      : usuario.papel === "ADMIN"
+        ? "/admin"
+        : "/ponto";
 
   return NextResponse.json({ ok: true, destino });
 }
