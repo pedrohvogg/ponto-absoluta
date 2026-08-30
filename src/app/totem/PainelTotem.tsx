@@ -221,6 +221,21 @@ export default function PainelTotem({
     }
   }
 
+  /**
+   * Sai da conta do totem. Fica discreto e pede confirmação de propósito: quem
+   * usa esta tela o dia todo é a equipe, e desconectar sem querer deixaria a
+   * loja sem bater ponto até alguém lembrar a senha do tablet.
+   */
+  async function sairDoTotem() {
+    const certeza = confirm(
+      "Desconectar este tablet do sistema?\n\n" +
+        "A equipe não conseguirá bater ponto até alguém entrar de novo com o e-mail e a senha do totem.",
+    );
+    if (!certeza) return;
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.href = "/login";
+  }
+
   function confirmarMatricula() {
     const captura = capturaRef.current;
     if (!captura || digitado.length === 0) return;
@@ -453,7 +468,14 @@ export default function PainelTotem({
         </div>
 
         <footer className="text-center text-xs text-slate-500">
-          Seu rosto é convertido em um código matemático e usado apenas para registrar o ponto.
+          <p>Seu rosto é convertido em um código matemático e usado apenas para registrar o ponto.</p>
+          <button
+            type="button"
+            onClick={sairDoTotem}
+            className="mt-2 text-slate-600 underline decoration-slate-700 underline-offset-2 hover:text-slate-400"
+          >
+            Sair do totem
+          </button>
         </footer>
       </div>
     </main>

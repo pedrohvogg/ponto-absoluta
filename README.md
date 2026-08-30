@@ -131,7 +131,9 @@ Como montar:
    precisa de e-mail e senha, que são só do tablet).
 2. Faça login com essa conta no tablet: ele abre direto em `/totem` e **não sai
    de lá** — a conta do totem não vê relatórios, não cadastra ninguém e não bate
-   ponto próprio. Se o aparelho sumir, não há nada a expor.
+   ponto próprio. Se o aparelho sumir, não há nada a expor. Para desconectar o
+   tablet existe **“Sair do totem”** no rodapé da tela, discreto e com
+   confirmação, para ninguém derrubar a estação sem querer.
 3. Cadastre cada funcionário (o e-mail é opcional — sem ele, a pessoa não tem
    login e bate ponto só pelo totem).
 4. Na ficha de cada um, use **Cadastro facial** para capturar o rosto com a
