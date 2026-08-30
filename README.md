@@ -224,7 +224,9 @@ A margem de erro do GPS é sempre descontada a favor do funcionário.
 
 ## Segurança e privacidade
 
-- Senhas com bcrypt; sessão em JWT assinado, cookie `httpOnly` + `SameSite=Lax`, 12 h.
+- Senhas com bcrypt; sessão em JWT assinado, cookie `httpOnly` + `SameSite=Lax`, 12 h
+  — exceto a conta do totem, que dura 30 dias para o tablet não pedir login toda
+  manhã (essa conta não tem privilégio nenhum além de abrir o quiosque).
 - Limite de tentativas de login por IP e por conta.
 - Senha provisória obrigatoriamente trocada no primeiro acesso.
 - Toda ação sensível (login, criação, reset de senha, alteração/exclusão de batida,
