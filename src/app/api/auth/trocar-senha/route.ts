@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { usuarioDaApi } from "@/lib/auth";
+import { telaInicial, usuarioDaApi } from "@/lib/auth";
 import { conferirSenha, gerarHash, validarForcaSenha } from "@/lib/senha";
 import { criarSessao } from "@/lib/sessao";
 import { ipDaRequisicao } from "@/lib/requisicao";
@@ -25,6 +25,10 @@ export async function POST(req: Request) {
 
   const usuario = await prisma.usuario.findUnique({ where: { id: sessao.id } });
   if (!usuario) return NextResponse.json({ erro: "Usuário não encontrado." }, { status: 404 });
+  // Conta sem senha (funcionário que só bate ponto no totem) não troca senha.
+  if (!usuario.senhaHash) {
+    return NextResponse.json({ erro: "Esta conta não usa senha." }, { status: 409 });
+  }
 
   if (!(await conferirSenha(dados.data.senhaAtual, usuario.senhaHash))) {
     return NextResponse.json({ erro: "Senha atual incorreta." }, { status: 400 });
@@ -45,7 +49,7 @@ export async function POST(req: Request) {
   // sessao.termoAceito ja reflete o estado atual do banco (usuarioDaApi confere na hora).
   await criarSessao({ ...sessao, trocarSenha: false });
 
-  const destino = !sessao.termoAceito ? "/termos" : sessao.papel === "ADMIN" ? "/admin" : "/ponto";
+  const destino = !sessao.termoAceito ? "/termos" : telaInicial(sessao.papel);
 
   return NextResponse.json({ ok: true, destino });
 }

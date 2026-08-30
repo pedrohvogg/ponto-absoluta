@@ -12,6 +12,8 @@ export type DadosConfig = {
   longitude: number | null;
   raioMetros: number;
   limiarFacial: number;
+  limiarTotem: number;
+  margemTotem: number;
   salvarFoto: boolean;
   intervaloMinimoMinutos: number;
   toleranciaMinutos: number;
@@ -260,6 +262,51 @@ export default function FormularioConfig({ inicial }: { inicial: DadosConfig }) 
             />
             Guardar a selfie de cada registro como comprovante
           </label>
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <h3 className="text-sm font-semibold text-slate-800">Totem da loja</h3>
+            <p className="mt-0.5 mb-3 text-xs text-slate-500">
+              No totem o sistema precisa descobrir quem é a pessoa entre todos os funcionários,
+              o que erra mais do que conferir uma pessoa já conhecida. Por isso estes limites são
+              separados — e mais rigorosos.
+            </p>
+
+            <label htmlFor="limiarTotem" className="rotulo">
+              Rigor ao reconhecer no totem: {dados.limiarTotem.toFixed(2)}
+            </label>
+            <input
+              id="limiarTotem"
+              type="range"
+              min={0.35}
+              max={0.6}
+              step={0.01}
+              className="w-full"
+              value={dados.limiarTotem}
+              onChange={(e) => definir("limiarTotem", Number(e.target.value))}
+            />
+            <p className="text-xs text-slate-500">
+              Recomendado: 0,45. Valor alto faz o totem reconhecer mais rápido, mas aumenta o
+              risco de bater o ponto na pessoa errada.
+            </p>
+
+            <label htmlFor="margemTotem" className="rotulo mt-3">
+              Margem de segurança entre dois parecidos: {dados.margemTotem.toFixed(2)}
+            </label>
+            <input
+              id="margemTotem"
+              type="range"
+              min={0}
+              max={0.2}
+              step={0.01}
+              className="w-full"
+              value={dados.margemTotem}
+              onChange={(e) => definir("margemTotem", Number(e.target.value))}
+            />
+            <p className="text-xs text-slate-500">
+              Recomendado: 0,06. Se os dois funcionários mais parecidos ficarem dentro desta
+              margem, o totem pede a matrícula em vez de arriscar. Zero desliga a checagem.
+            </p>
+          </div>
 
           <div className="max-w-xs">
             <label htmlFor="intervaloMinimo" className="rotulo">

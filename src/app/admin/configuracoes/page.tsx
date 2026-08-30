@@ -32,6 +32,8 @@ export default async function PaginaConfiguracoes() {
           longitude: config.longitude,
           raioMetros: config.raioMetros,
           limiarFacial: config.limiarFacial,
+          limiarTotem: config.limiarTotem,
+          margemTotem: config.margemTotem,
           salvarFoto: config.salvarFoto,
           intervaloMinimoMinutos: config.intervaloMinimoMinutos,
           toleranciaMinutos: config.toleranciaMinutos,

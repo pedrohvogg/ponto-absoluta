@@ -119,6 +119,59 @@ Vercel, Railway e Render já entregam HTTPS por padrão.
 
 ---
 
+## Modo totem (tablet fixo na loja)
+
+Um tablet na entrada, ligado o dia todo: o funcionário chega, mostra o rosto e o
+sistema **descobre quem é** entre todos os cadastrados e registra o ponto dele.
+Ninguém digita senha.
+
+Como montar:
+
+1. Em **Funcionários → Novo**, crie uma conta com tipo de acesso **Totem** (ela
+   precisa de e-mail e senha, que são só do tablet).
+2. Faça login com essa conta no tablet: ele abre direto em `/totem` e **não sai
+   de lá** — a conta do totem não vê relatórios, não cadastra ninguém e não bate
+   ponto próprio. Se o aparelho sumir, não há nada a expor.
+3. Cadastre cada funcionário (o e-mail é opcional — sem ele, a pessoa não tem
+   login e bate ponto só pelo totem).
+4. Na ficha de cada um, use **Cadastro facial** para capturar o rosto com a
+   pessoa presente.
+5. Na primeira vez que o totem reconhecer alguém, a própria pessoa lê e aceita o
+   termo de imagem ali na tela, antes do primeiro registro.
+
+### Identificar é mais difícil do que conferir
+
+Confirmar "esta pessoa é a Ana?" (1:1) é bem mais preciso do que descobrir "quem
+é esta pessoa?" (1:N) entre toda a equipe. Por isso o totem tem limites próprios,
+em Configurações:
+
+| Ajuste | Padrão | O que faz |
+| --- | --- | --- |
+| Rigor no totem | 0,45 | Mais rigoroso que o 0,50 usado na conferência 1:1 |
+| Margem de segurança | 0,06 | Distância mínima entre o 1º e o 2º mais parecidos |
+
+Se os dois candidatos mais próximos ficarem dentro da margem, o totem **não
+escolhe**: ele pede a matrícula e aí confere o rosto só contra aquela pessoa
+(volta a ser 1:1). O resultado é que uma dúvida vira dez segundos de digitação,
+nunca um ponto batido na pessoa errada.
+
+Duas proteções relacionadas, que já existiam:
+
+- O mesmo rosto não pode ser cadastrado em duas contas.
+- O totem manda ao servidor apenas o vetor do rosto — quem decide de quem é o
+  ponto é sempre o servidor, que reconhece de novo antes de gravar. Adulterar a
+  tela não muda o dono da batida.
+
+### Localização no totem
+
+A cerca virtual **não bloqueia** registros feitos no totem: o aparelho é fixo e
+está sob controle da empresa, então a garantia de lugar vem do equipamento, não
+do GPS (que num tablet em ambiente fechado erra muito e travaria a fila). A
+posição é gravada quando o aparelho informa. Para quem bate ponto pelo celular, a
+cerca continua valendo integralmente.
+
+---
+
 ## Os dois perfis
 
 ### Funcionário
@@ -138,7 +191,7 @@ retorno sem intervalo aberto).
 | Tela | O que faz |
 | --- | --- |
 | **Painel** | Quem está trabalhando, em intervalo ou sem registro no dia; alertas de atraso, cadastro facial pendente e batida fora do local |
-| **Funcionários** | Criar acesso (gera senha provisória), editar cadastro e jornada, resetar senha, limpar biometria, desativar acesso |
+| **Funcionários** | Criar funcionário com ou sem login próprio, criar a conta do totem, cadastrar o rosto de cada um, editar jornada, resetar senha, desativar acesso |
 | **Registros** | Todas as batidas com foto, confiança da validação e mapa da localização; lançamento manual e edição com motivo obrigatório |
 | **Ajustes** | Aprovar ou recusar solicitações — aprovar aplica a mudança no espelho automaticamente |
 | **Relatórios** | Espelho de ponto por período, com exportação CSV e impressão/PDF (com linhas de assinatura) |

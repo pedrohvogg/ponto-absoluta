@@ -63,9 +63,20 @@ export async function middleware(req: NextRequest) {
     }
   }
 
-  if (pathname.startsWith("/admin") && sessao.papel !== "ADMIN") {
+  // Cada papel so enxerga a sua area. A conta do totem em especial fica presa
+  // no quiosque: se o tablet for parar em maos erradas, nao ha nada a ver ali.
+  const inicial =
+    sessao.papel === "ADMIN" ? "/admin" : sessao.papel === "TOTEM" ? "/totem" : "/ponto";
+
+  const areaProibida =
+    (pathname.startsWith("/admin") && sessao.papel !== "ADMIN") ||
+    (pathname.startsWith("/totem") && sessao.papel !== "TOTEM") ||
+    (sessao.papel === "TOTEM" && !pathname.startsWith("/totem") && !pathname.startsWith("/api/"));
+
+  if (areaProibida) {
     const url = req.nextUrl.clone();
-    url.pathname = "/ponto";
+    url.pathname = inicial;
+    url.search = "";
     return NextResponse.redirect(url);
   }
 

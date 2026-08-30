@@ -16,7 +16,16 @@ export const esquemaJornada = z.object({
 
 export const esquemaFuncionario = esquemaJornada.extend({
   nome: z.string().trim().min(3, "Informe o nome completo.").max(120),
-  email: z.string().trim().toLowerCase().email("E-mail inválido."),
+  /// Ausente quando o funcionário bate ponto só pelo totem, sem acesso próprio.
+  /// Administradores e a conta do totem sempre precisam de e-mail para entrar.
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email("E-mail inválido.")
+    .nullable()
+    .optional()
+    .or(z.literal("").transform(() => null)),
   matricula: z
     .string()
     .trim()
@@ -27,8 +36,13 @@ export const esquemaFuncionario = esquemaJornada.extend({
     .transform((v) => v.toUpperCase()),
   cargo: z.string().trim().max(80).optional().nullable(),
   departamento: z.string().trim().max(80).optional().nullable(),
-  papel: z.enum(["ADMIN", "FUNCIONARIO"]).default("FUNCIONARIO"),
+  papel: z.enum(["ADMIN", "FUNCIONARIO", "TOTEM"]).default("FUNCIONARIO"),
 });
+
+/** Só funcionário pode existir sem login; admin e totem precisam entrar no sistema. */
+export function exigeCredenciais(papel: string): boolean {
+  return papel !== "FUNCIONARIO";
+}
 
 export const esquemaConfig = z.object({
   nomeEmpresa: z.string().trim().min(1).max(120),
@@ -39,6 +53,10 @@ export const esquemaConfig = z.object({
   longitude: z.number().min(-180).max(180).nullable(),
   raioMetros: z.number().int().min(20).max(50000),
   limiarFacial: z.number().min(0.3).max(0.7),
+  // Opcionais: quem não enviar mantém o valor atual, para que um cliente antigo
+  // não sobrescreva nem quebre ao salvar as demais configurações.
+  limiarTotem: z.number().min(0.3).max(0.6).optional(),
+  margemTotem: z.number().min(0).max(0.3).optional(),
   salvarFoto: z.boolean(),
   intervaloMinimoMinutos: z.number().int().min(0).max(120),
   toleranciaMinutos: z.number().int().min(0).max(120),

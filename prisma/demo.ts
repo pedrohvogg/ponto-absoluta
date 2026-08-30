@@ -36,6 +36,21 @@ async function main() {
   const senhaHash = await bcrypt.hash(SENHA_DEMO, 10);
   const hoje = hojeStr(FUSO);
 
+  // Conta do tablet da loja, para experimentar o modo totem.
+  // Chave pelo e-mail, que é o identificador de login desta conta.
+  await prisma.usuario.upsert({
+    where: { email: "totem@empresa.com" },
+    update: {},
+    create: {
+      nome: "Totem da Loja",
+      email: "totem@empresa.com",
+      matricula: "TOTEM",
+      senhaHash,
+      papel: "TOTEM",
+      trocarSenha: false,
+    },
+  });
+
   for (const pessoa of EQUIPE) {
     const usuario = await prisma.usuario.upsert({
       where: { matricula: pessoa.matricula },
@@ -101,7 +116,8 @@ async function main() {
   console.log("\n✅ Dados de demonstração criados.");
   console.log(`   Funcionários: ${EQUIPE.map((p) => p.matricula).join(", ")}`);
   console.log(`   Senha de todos: ${SENHA_DEMO}`);
-  console.log("   (o cadastro facial precisa ser feito por cada um na tela “Meu rosto”)\n");
+  console.log("   Totem da loja: totem@empresa.com (mesma senha) → abre em /totem");
+  console.log("   (o cadastro facial precisa ser feito na ficha de cada funcionário)\n");
 }
 
 main()

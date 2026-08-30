@@ -29,14 +29,28 @@ export async function exigirUsuario(): Promise<Sessao> {
 
 export async function exigirAdmin(): Promise<Sessao> {
   const sessao = await exigirUsuario();
-  if (sessao.papel !== "ADMIN") redirect("/ponto");
+  if (sessao.papel !== "ADMIN") redirect(telaInicial(sessao.papel));
   return sessao;
 }
 
 export async function exigirFuncionario(): Promise<Sessao> {
   const sessao = await exigirUsuario();
-  if (sessao.papel === "ADMIN") redirect("/admin");
+  if (sessao.papel !== "FUNCIONARIO") redirect(telaInicial(sessao.papel));
   return sessao;
+}
+
+/** Conta do tablet da loja: so pode abrir a tela de quiosque. */
+export async function exigirTotem(): Promise<Sessao> {
+  const sessao = await exigirUsuario();
+  if (sessao.papel !== "TOTEM") redirect(telaInicial(sessao.papel));
+  return sessao;
+}
+
+/** Para onde cada papel vai depois de entrar. */
+export function telaInicial(papel: string): string {
+  if (papel === "ADMIN") return "/admin";
+  if (papel === "TOTEM") return "/totem";
+  return "/ponto";
 }
 
 /** Versao para rotas de API: devolve null em vez de redirecionar. */
@@ -59,4 +73,9 @@ export async function usuarioDaApi(): Promise<Sessao | null> {
 export async function adminDaApi(): Promise<Sessao | null> {
   const sessao = await usuarioDaApi();
   return sessao?.papel === "ADMIN" ? sessao : null;
+}
+
+export async function totemDaApi(): Promise<Sessao | null> {
+  const sessao = await usuarioDaApi();
+  return sessao?.papel === "TOTEM" ? sessao : null;
 }

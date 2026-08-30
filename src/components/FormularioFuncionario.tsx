@@ -10,7 +10,7 @@ export type DadosFuncionario = {
   matricula: string;
   cargo: string;
   departamento: string;
-  papel: "ADMIN" | "FUNCIONARIO";
+  papel: "ADMIN" | "FUNCIONARIO" | "TOTEM";
   cargaDiariaMinutos: number;
   entradaPrevista: string;
   saidaPrevista: string;
@@ -51,10 +51,17 @@ export default function FormularioFuncionario({
 }) {
   const router = useRouter();
   const [dados, setDados] = useState<DadosFuncionario>(inicial ?? PADRAO);
+  // Quem bate ponto só pelo totem não precisa de e-mail nem senha. Ao editar,
+  // já vem marcado se a pessoa tiver e-mail cadastrado.
+  const [comLogin, setComLogin] = useState(Boolean(inicial?.email));
   const [erro, setErro] = useState<string | null>(null);
   const [salvo, setSalvo] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [senhaGerada, setSenhaGerada] = useState<string | null>(null);
+  const [criado, setCriado] = useState(false);
+
+  // Administrador e totem entram no sistema; funcionário só se você quiser.
+  const precisaEmail = comLogin || dados.papel !== "FUNCIONARIO";
 
   function definir<K extends keyof DadosFuncionario>(campo: K, valor: DadosFuncionario[K]) {
     setDados((d) => ({ ...d, [campo]: valor }));
@@ -83,6 +90,7 @@ export default function FormularioFuncionario({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...dados,
+          email: precisaEmail ? dados.email : "",
           cargo: dados.cargo || null,
           departamento: dados.departamento || null,
         }),
@@ -93,7 +101,9 @@ export default function FormularioFuncionario({
         return;
       }
       if (modo === "criar") {
-        setSenhaGerada(resultado.senhaProvisoria);
+        // Sem login, não há senha para entregar: mostramos a confirmação simples.
+        setSenhaGerada(resultado.senhaProvisoria ?? "");
+        setCriado(true);
       } else {
         setSalvo(true);
         router.refresh();
@@ -105,38 +115,57 @@ export default function FormularioFuncionario({
     }
   }
 
-  if (senhaGerada && inicial === undefined) {
+  if (criado && inicial === undefined) {
+    const temSenha = Boolean(senhaGerada);
     return (
       <div className="cartao border-emerald-200 bg-emerald-50 p-6 text-center">
-        <p className="text-3xl">🔑</p>
-        <h2 className="mt-2 text-lg font-bold text-emerald-900">Acesso criado</h2>
+        <p className="text-3xl">{temSenha ? "🔑" : "✅"}</p>
+        <h2 className="mt-2 text-lg font-bold text-emerald-900">
+          {temSenha ? "Acesso criado" : "Funcionário cadastrado"}
+        </h2>
         <p className="mt-1 text-sm text-emerald-800">
-          Entregue estes dados a <strong>{dados.nome}</strong>. A senha provisória{" "}
-          <strong>não poderá ser vista novamente</strong> — no primeiro acesso o sistema exige a
-          troca.
+          {temSenha ? (
+            <>
+              Entregue estes dados a <strong>{dados.nome}</strong>. A senha provisória{" "}
+              <strong>não poderá ser vista novamente</strong> — no primeiro acesso o sistema exige
+              a troca.
+            </>
+          ) : (
+            <>
+              <strong>{dados.nome}</strong> já pode bater ponto no totem. Falta apenas cadastrar o
+              rosto: leve a pessoa até o tablet, ou use o botão de cadastro facial na ficha dela.
+            </>
+          )}
         </p>
         <dl className="mx-auto mt-4 max-w-sm space-y-2 text-left">
           <div className="rounded-lg bg-white p-3">
-            <dt className="text-xs uppercase text-slate-500">E-mail / matrícula</dt>
+            <dt className="text-xs uppercase text-slate-500">
+              {temSenha ? "E-mail / matrícula" : "Matrícula"}
+            </dt>
             <dd className="font-mono text-sm">
-              {dados.email} · {dados.matricula}
+              {temSenha ? `${dados.email} · ${dados.matricula}` : dados.matricula}
             </dd>
           </div>
-          <div className="rounded-lg bg-white p-3">
-            <dt className="text-xs uppercase text-slate-500">Senha provisória</dt>
-            <dd className="font-mono text-xl font-bold tracking-wider">{senhaGerada}</dd>
-          </div>
+          {temSenha && (
+            <div className="rounded-lg bg-white p-3">
+              <dt className="text-xs uppercase text-slate-500">Senha provisória</dt>
+              <dd className="font-mono text-xl font-bold tracking-wider">{senhaGerada}</dd>
+            </div>
+          )}
         </dl>
         <div className="mt-5 flex flex-wrap justify-center gap-2">
-          <button
-            onClick={() => navigator.clipboard?.writeText(`${dados.email} / ${senhaGerada}`)}
-            className="botao-secundario"
-          >
-            Copiar dados
-          </button>
+          {temSenha && (
+            <button
+              onClick={() => navigator.clipboard?.writeText(`${dados.email} / ${senhaGerada}`)}
+              className="botao-secundario"
+            >
+              Copiar dados
+            </button>
+          )}
           <button
             onClick={() => {
               setSenhaGerada(null);
+              setCriado(false);
               setDados(PADRAO);
             }}
             className="botao-secundario"
@@ -168,19 +197,33 @@ export default function FormularioFuncionario({
               onChange={(e) => definir("nome", e.target.value)}
             />
           </div>
-          <div>
-            <label htmlFor="email" className="rotulo">
-              E-mail de acesso *
-            </label>
-            <input
-              id="email"
-              type="email"
-              className="campo"
-              required
-              value={dados.email}
-              onChange={(e) => definir("email", e.target.value)}
-            />
-          </div>
+          {precisaEmail ? (
+            <div>
+              <label htmlFor="email" className="rotulo">
+                E-mail de acesso *
+              </label>
+              <input
+                id="email"
+                type="email"
+                className="campo"
+                required
+                value={dados.email}
+                onChange={(e) => definir("email", e.target.value)}
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                {dados.papel === "TOTEM"
+                  ? "É com este e-mail que você entra no tablet da loja."
+                  : dados.papel === "ADMIN"
+                    ? "Administradores precisam de e-mail para entrar."
+                    : "O sistema gera uma senha provisória ao salvar."}
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+              Sem login próprio: esta pessoa bate ponto apenas no totem da loja, sendo
+              reconhecida pelo rosto. Quem consulta o espelho de ponto dela é você.
+            </div>
+          )}
           <div>
             <label htmlFor="matricula" className="rotulo">
               Matrícula *
@@ -228,8 +271,29 @@ export default function FormularioFuncionario({
             >
               <option value="FUNCIONARIO">Funcionário (bate ponto)</option>
               <option value="ADMIN">Administrador (gerencia o sistema)</option>
+              <option value="TOTEM">Totem (tablet fixo na loja)</option>
             </select>
           </div>
+
+          {dados.papel === "FUNCIONARIO" && (
+            <div className="md:col-span-2">
+              <label className="flex items-start gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={comLogin}
+                  onChange={(e) => setComLogin(e.target.checked)}
+                />
+                <span>
+                  Dar acesso próprio (login por e-mail no celular)
+                  <span className="block text-xs text-slate-500">
+                    Opcional. Serve para a pessoa consultar o próprio espelho de ponto e pedir
+                    ajuste de batidas. Bater ponto no totem funciona sem isso.
+                  </span>
+                </span>
+              </label>
+            </div>
+          )}
         </div>
       </section>
 

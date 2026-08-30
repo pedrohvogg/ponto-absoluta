@@ -13,7 +13,12 @@ import {
 } from "../src/lib/datas";
 import { calcularJornada, proximoTipo, situacaoAtual, totalizar, validarSequencia } from "../src/lib/jornada";
 import { dentroDaCerca, distanciaMetros, MARGEM_GPS_MAXIMA } from "../src/lib/geo";
-import { descriptorValido, distanciaEuclidiana, melhorDistancia } from "../src/lib/face";
+import {
+  descriptorValido,
+  distanciaEuclidiana,
+  identificar,
+  melhorDistancia,
+} from "../src/lib/face";
 
 const FUSO = "America/Sao_Paulo";
 const JORNADA_PADRAO = {
@@ -320,5 +325,81 @@ describe("comparação facial", () => {
     const outro = base.map((v, i) => v + (i % 2 ? 0.4 : -0.4));
     const d = melhorDistancia(outro, [base]);
     assert.ok(d !== null && d > 0.5, `esperava distância grande, veio ${d}`);
+  });
+});
+
+describe("identificação no totem (1:N)", () => {
+  const LIMIAR = 0.45;
+  const MARGEM = 0.06;
+
+  /** Rostos sintéticos bem distintos entre si. */
+  const rosto = (semente: number) =>
+    Array.from({ length: 128 }, (_, i) => Math.sin(semente * 7.3 + i * 1.7) / 3);
+  /** Mesma pessoa em outra iluminação: pequena variação no vetor. */
+  const variacao = (d: number[], escala: number) =>
+    d.map((v, i) => v + Math.sin(i * 3.1) * escala);
+
+  const ana = rosto(1);
+  const bruno = rosto(2);
+  const carla = rosto(3);
+  const equipe = [
+    { referencia: "Ana", descriptors: [ana] },
+    { referencia: "Bruno", descriptors: [bruno] },
+    { referencia: "Carla", descriptors: [carla] },
+  ];
+
+  it("identifica a pessoa certa entre vários cadastrados", () => {
+    const r = identificar(variacao(bruno, 0.002), equipe, LIMIAR, MARGEM);
+    assert.equal(r.situacao, "IDENTIFICADO");
+    if (r.situacao === "IDENTIFICADO") assert.equal(r.referencia, "Bruno");
+  });
+
+  it("reconhece a pessoa por qualquer uma de suas capturas", () => {
+    // Ana cadastrou dois rostos; o segundo é o que aparece na câmera.
+    const anaDeOculos = variacao(ana, 0.2);
+    const comDuas = [
+      { referencia: "Ana", descriptors: [ana, anaDeOculos] },
+      { referencia: "Bruno", descriptors: [bruno] },
+    ];
+    const r = identificar(variacao(anaDeOculos, 0.001), comDuas, LIMIAR, MARGEM);
+    assert.equal(r.situacao, "IDENTIFICADO");
+    if (r.situacao === "IDENTIFICADO") assert.equal(r.referencia, "Ana");
+  });
+
+  it("recusa quem não está cadastrado em vez de chutar o mais parecido", () => {
+    const visitante = rosto(99);
+    const r = identificar(visitante, equipe, LIMIAR, MARGEM);
+    assert.equal(r.situacao, "DESCONHECIDO");
+  });
+
+  it("pede a matrícula quando dois funcionários ficam parecidos demais", () => {
+    // Dois cadastros quase idênticos: nenhum se destaca o suficiente.
+    const gemeo = variacao(ana, 0.01);
+    const comGemeos = [
+      { referencia: "Ana", descriptors: [ana] },
+      { referencia: "Irmã da Ana", descriptors: [gemeo] },
+    ];
+    const r = identificar(variacao(ana, 0.005), comGemeos, LIMIAR, MARGEM);
+    assert.equal(r.situacao, "AMBIGUO");
+  });
+
+  it("não exige margem quando só há uma pessoa cadastrada", () => {
+    const r = identificar(variacao(ana, 0.002), [{ referencia: "Ana", descriptors: [ana] }], LIMIAR, MARGEM);
+    assert.equal(r.situacao, "IDENTIFICADO");
+  });
+
+  it("devolve DESCONHECIDO quando ninguém tem rosto cadastrado", () => {
+    const r = identificar(ana, [], LIMIAR, MARGEM);
+    assert.equal(r.situacao, "DESCONHECIDO");
+    if (r.situacao === "DESCONHECIDO") assert.equal(r.melhorDistancia, null);
+  });
+
+  it("é mais rigoroso que a conferência 1:1", () => {
+    // Uma variação grande passa no limiar 1:1 (0.5) mas não no do totem (0.45).
+    const distante = variacao(ana, 0.055);
+    const d = melhorDistancia(distante, [ana]);
+    assert.ok(d !== null && d > LIMIAR && d < 0.5, `distância fora da faixa do teste: ${d}`);
+    const r = identificar(distante, equipe, LIMIAR, MARGEM);
+    assert.equal(r.situacao, "DESCONHECIDO");
   });
 });

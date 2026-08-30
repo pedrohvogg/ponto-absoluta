@@ -30,6 +30,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   // ---- Ações pontuais ----
   if (dados.acao === "RESETAR_SENHA") {
+    if (!alvo.email) {
+      return NextResponse.json(
+        {
+          erro:
+            "Este funcionário não tem login (bate ponto só pelo totem). Para dar acesso próprio, cadastre um e-mail no formulário abaixo.",
+        },
+        { status: 409 },
+      );
+    }
     const senha = senhaProvisoria();
     await prisma.usuario.update({
       where: { id },
@@ -83,7 +92,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       where: { id },
       data: {
         nome: dados.nome,
-        email: dados.email,
+        email: dados.email === undefined ? undefined : dados.email || null,
         matricula: dados.matricula,
         cargo: dados.cargo === undefined ? undefined : dados.cargo || null,
         departamento: dados.departamento === undefined ? undefined : dados.departamento || null,

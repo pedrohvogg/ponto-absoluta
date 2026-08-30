@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { conferirSenha } from "@/lib/senha";
 import { criarSessao } from "@/lib/sessao";
+import { telaInicial } from "@/lib/auth";
 import { limitar, zerarLimite } from "@/lib/limite";
 import { ipDaRequisicao } from "@/lib/requisicao";
 
@@ -49,6 +50,13 @@ export async function POST(req: Request) {
 
   const generico = { erro: "E-mail/matrícula ou senha incorretos." };
   if (!usuario) return NextResponse.json(generico, { status: 401 });
+  // Funcionário cadastrado só para o totem não tem senha: não há login possível.
+  if (!usuario.senhaHash) {
+    return NextResponse.json(
+      { erro: "Este funcionário registra o ponto pelo totem da loja, sem login próprio." },
+      { status: 403 },
+    );
+  }
   if (!(await conferirSenha(dados.data.senha, usuario.senhaHash))) {
     await prisma.auditoria.create({
       data: { usuarioId: usuario.id, acao: "LOGIN_FALHOU", ip },
@@ -70,7 +78,9 @@ export async function POST(req: Request) {
   await criarSessao({
     id: usuario.id,
     nome: usuario.nome,
-    email: usuario.email,
+    // Sem senhaHash já saímos acima, e quem tem senha tem e-mail: o ?? só
+    // satisfaz o tipo, não é um caso real.
+    email: usuario.email ?? "",
     papel: usuario.papel,
     trocarSenha: usuario.trocarSenha,
     termoAceito,
@@ -85,9 +95,7 @@ export async function POST(req: Request) {
     ? "/trocar-senha"
     : !termoAceito
       ? "/termos"
-      : usuario.papel === "ADMIN"
-        ? "/admin"
-        : "/ponto";
+      : telaInicial(usuario.papel);
 
   return NextResponse.json({ ok: true, destino });
 }

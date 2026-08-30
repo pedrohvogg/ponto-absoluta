@@ -10,6 +10,9 @@ datasource db {
 enum Papel {
   ADMIN
   FUNCIONARIO
+  /// Conta do tablet fixo na loja: so abre a tela de quiosque, onde os
+  /// funcionarios sao identificados pelo rosto. Nao ve relatorios nem cadastros.
+  TOTEM
 }
 
 enum TipoRegistro {
@@ -20,7 +23,8 @@ enum TipoRegistro {
 }
 
 enum OrigemRegistro {
-  FACIAL // batido pelo proprio funcionario com validacao facial
+  FACIAL // batido pelo proprio funcionario, logado, com validacao facial
+  TOTEM  // batido no tablet da loja, com o funcionario identificado pelo rosto
   MANUAL // lancado diretamente por um administrador
   AJUSTE // criado pela aprovacao de uma solicitacao de ajuste
 }
@@ -40,9 +44,11 @@ enum AcaoSolicitacao {
 model Usuario {
   id        String  @id @default(cuid())
   nome      String
-  email     String  @unique
+  /// Nulo quando o funcionario nao tem acesso proprio (bate ponto so pelo totem).
+  email     String? @unique
   matricula String  @unique
-  senhaHash String
+  /// Nulo quando o funcionario nao tem acesso proprio. Sem hash, nao ha login.
+  senhaHash String?
   papel     Papel   @default(FUNCIONARIO)
   ativo     Boolean @default(true)
 
@@ -179,7 +185,17 @@ model Config {
 
   // ---- Biometria facial ----
   /// Distancia maxima aceita entre o rosto capturado e a biometria (0.4 rigido, 0.6 tolerante).
+  /// Usado na conferencia 1:1, quando o sistema ja sabe quem e a pessoa.
   limiarFacial   Float   @default(0.5)
+
+  // ---- Identificacao no totem (1:N) ----
+  /// Descobrir quem e a pessoa entre todos os funcionarios erra mais do que
+  /// confirmar uma pessoa conhecida, entao o limite aqui e mais rigoroso.
+  limiarTotem    Float   @default(0.45)
+  /// Distancia minima entre o melhor e o segundo melhor candidato. Se dois
+  /// funcionarios ficarem parecidos demais, o totem pede a matricula em vez de
+  /// arriscar bater o ponto na pessoa errada.
+  margemTotem    Float   @default(0.06)
   /// Guardar a selfie do registro como comprovante para o admin.
   salvarFoto     Boolean @default(true)
   /// Intervalo minimo entre dois registros do mesmo funcionario, em minutos.
