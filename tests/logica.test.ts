@@ -19,6 +19,7 @@ import {
   identificar,
   melhorDistancia,
 } from "../src/lib/face";
+import { decidirRota, telaInicial, type Sessao } from "../src/lib/rotas";
 
 const FUSO = "America/Sao_Paulo";
 const JORNADA_PADRAO = {
@@ -401,5 +402,103 @@ describe("identificação no totem (1:N)", () => {
     assert.ok(d !== null && d > LIMIAR && d < 0.5, `distância fora da faixa do teste: ${d}`);
     const r = identificar(distante, equipe, LIMIAR, MARGEM);
     assert.equal(r.situacao, "DESCONHECIDO");
+  });
+});
+
+describe("rotas — navegação sem laço", () => {
+  const TOTEM_NOVO = { papel: "TOTEM", trocarSenha: true, termoAceito: true };
+  const TOTEM = { papel: "TOTEM", trocarSenha: false, termoAceito: true };
+  const FUNC_NOVO = { papel: "FUNCIONARIO", trocarSenha: true, termoAceito: false };
+  const FUNC_SEM_TERMO = { papel: "FUNCIONARIO", trocarSenha: false, termoAceito: false };
+  const FUNC = { papel: "FUNCIONARIO", trocarSenha: false, termoAceito: true };
+  const ADMIN = { papel: "ADMIN", trocarSenha: false, termoAceito: true };
+
+  const PAGINAS = ["/", "/admin", "/totem", "/ponto", "/trocar-senha", "/termos", "/login"];
+
+  /**
+   * Segue os redirecionamentos como o navegador faria e devolve onde parou.
+   * Estoura se um caminho se repetir — que e exatamente o ERR_TOO_MANY_REDIRECTS.
+   */
+  function navegar(inicio: string, sessao: Sessao | null): string {
+    const trilha = [inicio];
+    let atual = inicio;
+    for (let i = 0; i < 10; i++) {
+      const d = decidirRota(atual, sessao);
+      if (d.tipo !== "redireciona") return atual;
+      atual = d.destino;
+      assert.ok(!trilha.includes(atual), `laço de redirecionamento: ${[...trilha, atual].join(" → ")}`);
+      trilha.push(atual);
+    }
+    assert.fail(`redirecionamentos demais: ${trilha.join(" → ")}`);
+  }
+
+  for (const [nome, sessao] of [
+    ["totem com senha provisória", TOTEM_NOVO],
+    ["totem", TOTEM],
+    ["funcionário com senha provisória", FUNC_NOVO],
+    ["funcionário sem termo aceito", FUNC_SEM_TERMO],
+    ["funcionário", FUNC],
+    ["administrador", ADMIN],
+    ["visitante sem sessão", null],
+  ] as const) {
+    it(`nenhuma página entra em laço para ${nome}`, () => {
+      for (const pagina of PAGINAS) navegar(pagina, sessao);
+    });
+  }
+
+  it("totem com senha provisória para na troca de senha, não no quiosque", () => {
+    // O caso que quebrou em produção: o portão de senha mandava para
+    // /trocar-senha e a regra de área devolvia para /totem, sem parar.
+    assert.equal(navegar("/trocar-senha", TOTEM_NOVO), "/trocar-senha");
+    assert.equal(navegar("/totem", TOTEM_NOVO), "/trocar-senha");
+    assert.equal(navegar("/", TOTEM_NOVO), "/trocar-senha");
+  });
+
+  it("cada papel cai na sua área depois de passar pelos portões", () => {
+    // A raiz não é área de ninguém: o middleware a libera e a própria página
+    // manda cada um para telaInicial(). A exceção é o totem, que o middleware
+    // já prende no quiosque antes de a página abrir.
+    assert.equal(navegar("/", ADMIN), "/");
+    assert.equal(navegar("/", FUNC), "/");
+    assert.equal(navegar("/", TOTEM), "/totem");
+
+    assert.equal(telaInicial("ADMIN"), "/admin");
+    assert.equal(telaInicial("FUNCIONARIO"), "/ponto");
+    assert.equal(telaInicial("TOTEM"), "/totem");
+
+    // Passados os portões, cada um abre a sua área sem novo desvio.
+    assert.equal(navegar("/admin", ADMIN), "/admin");
+    assert.equal(navegar("/ponto", FUNC), "/ponto");
+    assert.equal(navegar("/totem", TOTEM), "/totem");
+  });
+
+  it("o totem fica preso no quiosque", () => {
+    assert.equal(navegar("/admin", TOTEM), "/totem");
+    assert.equal(navegar("/ponto", TOTEM), "/totem");
+  });
+
+  it("quem não é ADMIN não entra no painel", () => {
+    assert.equal(navegar("/admin", FUNC), "/ponto");
+    assert.equal(navegar("/admin/funcionarios", FUNC), "/ponto");
+  });
+
+  it("o termo só segura depois que a senha já foi trocada", () => {
+    // Senão o próprio endpoint de troca de senha ficaria bloqueado pelo portão
+    // seguinte, e o funcionário novo não teria por onde começar.
+    assert.equal(decidirRota("/api/auth/trocar-senha", FUNC_NOVO).tipo, "segue");
+    assert.equal(navegar("/ponto", FUNC_SEM_TERMO), "/termos");
+    assert.equal(decidirRota("/api/termos/aceitar", FUNC_SEM_TERMO).tipo, "segue");
+  });
+
+  it("sem sessão, página vai para o login e API responde 401", () => {
+    assert.equal(navegar("/ponto", null), "/login");
+    assert.equal(decidirRota("/api/registros", null).tipo, "naoAutorizado");
+    assert.equal(decidirRota("/api/auth/login", null).tipo, "segue");
+  });
+
+  it("o logout funciona em qualquer portão", () => {
+    for (const s of [TOTEM_NOVO, FUNC_NOVO, FUNC_SEM_TERMO, TOTEM, ADMIN]) {
+      assert.equal(decidirRota("/api/auth/logout", s).tipo, "segue", `papel ${s.papel}`);
+    }
   });
 });

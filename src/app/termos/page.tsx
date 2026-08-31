@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { exigirUsuario } from "@/lib/auth";
+import { exigirUsuario, telaInicial } from "@/lib/auth";
 import { obterConfig } from "@/lib/config";
 import { secoesTermoUso, TEXTO_ACEITE } from "@/lib/termoUso";
 import AceitarTermo from "./AceitarTermo";
@@ -8,8 +8,8 @@ export const dynamic = "force-dynamic";
 
 export default async function PaginaTermos() {
   const sessao = await exigirUsuario();
-  // Administradores não batem ponto: o termo de imagem/biometria não se aplica.
-  if (sessao.papel !== "FUNCIONARIO") redirect("/admin");
+  // Só funcionário bate ponto: o termo de imagem não se aplica aos outros papéis.
+  if (sessao.papel !== "FUNCIONARIO") redirect(telaInicial(sessao.papel));
   if (sessao.termoAceito) redirect("/ponto");
 
   const config = await obterConfig();

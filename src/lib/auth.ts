@@ -2,6 +2,7 @@ import "server-only";
 import { redirect } from "next/navigation";
 import { prisma } from "./prisma";
 import { lerSessao, type Sessao } from "./sessao";
+import { telaInicial } from "./rotas";
 
 /** ADMIN nao bate ponto, entao o termo de biometria nao se aplica a esse papel. */
 function precisaAceitarTermo(papel: string, termoAceiteEm: Date | null): boolean {
@@ -46,12 +47,12 @@ export async function exigirTotem(): Promise<Sessao> {
   return sessao;
 }
 
-/** Para onde cada papel vai depois de entrar. */
-export function telaInicial(papel: string): string {
-  if (papel === "ADMIN") return "/admin";
-  if (papel === "TOTEM") return "/totem";
-  return "/ponto";
-}
+/**
+ * Para onde cada papel vai depois de entrar. Vem de `lib/rotas` para as paginas
+ * e o middleware concordarem: se cada um tivesse a sua tabela, um mandaria para
+ * onde o outro nao deixa entrar — que e como nasce um laco de redirecionamento.
+ */
+export { telaInicial };
 
 /** Versao para rotas de API: devolve null em vez de redirecionar. */
 export async function usuarioDaApi(): Promise<Sessao | null> {
