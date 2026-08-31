@@ -1,6 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { jwtVerify } from "jose";
-import { decidirRota, type Sessao } from "@/lib/rotas";
+import {
+  COOKIE_SALTOS,
+  contarSalto,
+  decidirRota,
+  ERRO_LACO,
+  estourouSaltos,
+  type Sessao,
+} from "@/lib/rotas";
 
 const COOKIE = "ponto_sessao";
 
@@ -35,13 +42,36 @@ export async function middleware(req: NextRequest) {
   }
 
   if (decisao.tipo === "redireciona") {
+    const saltos = contarSalto(req.cookies.get(COOKIE_SALTOS)?.value);
     const url = req.nextUrl.clone();
+
+    // Saltos demais seguidos: em vez de deixar o navegador cortar com
+    // ERR_TOO_MANY_REDIRECTS, o sistema descarta a sessao e volta ao login.
+    if (estourouSaltos(saltos)) {
+      url.pathname = "/login";
+      url.search = `?erro=${ERRO_LACO}`;
+      const resposta = NextResponse.redirect(url);
+      resposta.cookies.delete(COOKIE);
+      resposta.cookies.delete(COOKIE_SALTOS);
+      return resposta;
+    }
+
     url.pathname = decisao.destino;
     url.search = "";
-    return NextResponse.redirect(url);
+    const resposta = NextResponse.redirect(url);
+    resposta.cookies.set(COOKIE_SALTOS, String(saltos), {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 10,
+    });
+    return resposta;
   }
 
-  return NextResponse.next();
+  // Chegou a uma pagina de verdade: a contagem recomeça.
+  const resposta = NextResponse.next();
+  if (req.cookies.has(COOKIE_SALTOS)) resposta.cookies.delete(COOKIE_SALTOS);
+  return resposta;
 }
 
 export const config = {

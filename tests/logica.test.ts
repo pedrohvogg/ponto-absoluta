@@ -19,7 +19,14 @@ import {
   identificar,
   melhorDistancia,
 } from "../src/lib/face";
-import { decidirRota, telaInicial, type Sessao } from "../src/lib/rotas";
+import {
+  contarSalto,
+  decidirRota,
+  estourouSaltos,
+  LIMITE_SALTOS,
+  telaInicial,
+  type Sessao,
+} from "../src/lib/rotas";
 
 const FUSO = "America/Sao_Paulo";
 const JORNADA_PADRAO = {
@@ -499,6 +506,33 @@ describe("rotas — navegação sem laço", () => {
   it("o logout funciona em qualquer portão", () => {
     for (const s of [TOTEM_NOVO, FUNC_NOVO, FUNC_SEM_TERMO, TOTEM, ADMIN]) {
       assert.equal(decidirRota("/api/auth/logout", s).tipo, "segue", `papel ${s.papel}`);
+    }
+  });
+});
+
+describe("rotas — rede de segurança contra laço", () => {
+  it("conta saltos a partir do cookie, tolerando ausência e lixo", () => {
+    assert.equal(contarSalto(undefined), 1);
+    assert.equal(contarSalto(""), 1);
+    assert.equal(contarSalto("abc"), 1);
+    assert.equal(contarSalto("-3"), 1);
+    assert.equal(contarSalto("2"), 3);
+  });
+
+  it("deixa passar as correntes legítimas de redirecionamento", () => {
+    // A maior corrente real tem 2 saltos (/ → /ponto → /termos).
+    for (let salto = 1; salto <= 3; salto++) assert.equal(estourouSaltos(salto), false);
+  });
+
+  it("corta quando os saltos passam do limite", () => {
+    assert.equal(estourouSaltos(LIMITE_SALTOS), false);
+    assert.equal(estourouSaltos(LIMITE_SALTOS + 1), true);
+  });
+
+  it("o login sempre abre, para a saída de emergência existir de fato", () => {
+    // Se o /login também redirecionasse, não haveria para onde escapar.
+    for (const s of [null, { papel: "TOTEM", trocarSenha: true, termoAceito: true }]) {
+      assert.equal(decidirRota("/login", s).tipo, "segue");
     }
   });
 });

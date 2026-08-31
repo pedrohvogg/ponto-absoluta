@@ -44,6 +44,38 @@ export type Decisao =
   | { tipo: "redireciona"; destino: string }
   | { tipo: "naoAutorizado" };
 
+/** Cookie que conta saltos seguidos, para cortar qualquer laço. */
+export const COOKIE_SALTOS = "ponto_saltos";
+
+/**
+ * Quantos redirecionamentos seguidos ainda sao considerados normais. A maior
+ * corrente legitima tem 2 saltos (/ -> /ponto -> /termos); 5 da folga de sobra.
+ */
+export const LIMITE_SALTOS = 5;
+
+/** Motivo mostrado no login quando a rede de seguranca corta um laço. */
+export const ERRO_LACO = "sessao_confusa";
+
+/** Le o contador do cookie tolerando ausencia e lixo, e soma este salto. */
+export function contarSalto(valorAtual: string | undefined): number {
+  const lido = Number.parseInt(valorAtual ?? "", 10);
+  return (Number.isInteger(lido) && lido > 0 ? lido : 0) + 1;
+}
+
+/**
+ * Rede de seguranca contra ERR_TOO_MANY_REDIRECTS.
+ *
+ * As regras acima sao testadas e nao entram em laço, mas elas decidem a partir
+ * do cookie enquanto as paginas decidem a partir do banco. Se os dois
+ * discordarem — cookie antigo, senha trocada em outra aba, deploy no meio do
+ * caminho — um pode mandar para onde o outro nao deixa entrar, e o usuario fica
+ * olhando uma tela de erro do navegador sem saida nenhuma. Aqui o sistema
+ * desiste antes disso: apaga a sessao e devolve ao login, que sempre abre.
+ */
+export function estourouSaltos(saltos: number): boolean {
+  return saltos > LIMITE_SALTOS;
+}
+
 /**
  * Para onde vai um pedido. Os portoes sao sequenciais de proposito
  * (senha -> termo -> area): avaliados em paralelo, o portao do termo bloquearia
