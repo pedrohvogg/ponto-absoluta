@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 import { lerSessao } from "@/lib/sessao";
 import { obterConfig } from "@/lib/config";
+import { ERRO_LACO, telaInicial } from "@/lib/rotas";
+import { versaoImplantada } from "@/lib/versao";
 import FormularioLogin from "./FormularioLogin";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +13,9 @@ export default async function PaginaLogin({
   searchParams: Promise<{ erro?: string }>;
 }) {
   const sessao = await lerSessao();
-  if (sessao) redirect(sessao.papel === "ADMIN" ? "/admin" : "/ponto");
+  // Cada papel tem a sua tela inicial: mandar todo mundo para /ponto fazia o
+  // totem ser barrado logo em seguida pela regra de área.
+  if (sessao) redirect(telaInicial(sessao.papel));
 
   const { erro } = await searchParams;
   const config = await obterConfig();
@@ -33,12 +37,19 @@ export default async function PaginaLogin({
               Sua sessão foi encerrada porque o acesso está inativo.
             </p>
           )}
+          {erro === ERRO_LACO && (
+            <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              Sua sessão anterior ficou inconsistente e foi encerrada. Entre de novo.
+            </p>
+          )}
           <FormularioLogin />
         </div>
 
         <p className="mt-6 text-center text-xs text-slate-400">
           Ao registrar o ponto, sua imagem é usada apenas para conferir sua identidade.
         </p>
+        {/* Permite conferir, de fora, qual versão está publicada. */}
+        <p className="mt-2 text-center text-[11px] text-slate-300">versão {versaoImplantada()}</p>
       </div>
     </main>
   );

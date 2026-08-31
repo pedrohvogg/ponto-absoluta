@@ -5,6 +5,13 @@ import type { Papel } from "@prisma/client";
 
 const COOKIE = "ponto_sessao";
 const DURACAO_HORAS = 12;
+/**
+ * O tablet da loja fica ligado o dia todo: expirar a cada 12 h obrigaria alguem
+ * a refazer login toda manha. A conta do totem nao tem privilegio nenhum (so
+ * abre o quiosque), entao uma sessao longa aqui custa pouco e evita a loja
+ * ficar sem bater ponto porque ninguem sabia a senha do tablet.
+ */
+const DURACAO_HORAS_TOTEM = 30 * 24;
 
 export type Sessao = {
   id: string;
@@ -12,6 +19,9 @@ export type Sessao = {
   email: string;
   papel: Papel;
   trocarSenha: boolean;
+  /// Falso apenas quando o usuario e FUNCIONARIO e ainda nao aceitou o termo
+  /// de uso de imagem/biometria. Para ADMIN vale sempre true (nao se aplica).
+  termoAceito: boolean;
 };
 
 function chave(): Uint8Array {
@@ -25,10 +35,12 @@ function chave(): Uint8Array {
 }
 
 export async function criarSessao(dados: Sessao) {
+  const horas = dados.papel === "TOTEM" ? DURACAO_HORAS_TOTEM : DURACAO_HORAS;
+
   const token = await new SignJWT({ ...dados })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime(`${DURACAO_HORAS}h`)
+    .setExpirationTime(`${horas}h`)
     .sign(chave());
 
   (await cookies()).set(COOKIE, token, {
@@ -36,7 +48,7 @@ export async function criarSessao(dados: Sessao) {
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: DURACAO_HORAS * 60 * 60,
+    maxAge: horas * 60 * 60,
   });
 }
 
@@ -51,6 +63,7 @@ export async function lerSessao(): Promise<Sessao | null> {
       email: String(payload.email),
       papel: payload.papel as Papel,
       trocarSenha: Boolean(payload.trocarSenha),
+      termoAceito: Boolean(payload.termoAceito),
     };
   } catch {
     return null;

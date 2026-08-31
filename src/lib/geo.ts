@@ -19,3 +19,22 @@ export function formatarDistancia(m: number | null | undefined): string {
   if (m == null) return "—";
   return m < 1000 ? `${m} m` : `${(m / 1000).toFixed(1)} km`;
 }
+
+/**
+ * Margem maxima de erro de GPS aceita, em metros.
+ *
+ * A imprecisao do aparelho conta a favor do funcionario, mas com teto: o valor
+ * de `precisaoMetros` chega do navegador e poderia ser forjado. Sem o teto,
+ * declarar "precisao de 5 km" liberaria a batida de qualquer lugar.
+ */
+export const MARGEM_GPS_MAXIMA = 100;
+
+/** Decide se uma leitura de GPS coloca a pessoa dentro da cerca virtual. */
+export function dentroDaCerca(
+  distancia: number,
+  raioMetros: number,
+  precisaoMetros: number | null | undefined,
+): boolean {
+  const margem = Math.min(Math.max(precisaoMetros ?? 0, 0), MARGEM_GPS_MAXIMA);
+  return distancia - margem <= raioMetros;
+}

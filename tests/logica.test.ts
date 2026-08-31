@@ -12,8 +12,21 @@ import {
   somaDias,
 } from "../src/lib/datas";
 import { calcularJornada, proximoTipo, situacaoAtual, totalizar, validarSequencia } from "../src/lib/jornada";
-import { distanciaMetros } from "../src/lib/geo";
-import { descriptorValido, distanciaEuclidiana, melhorDistancia } from "../src/lib/face";
+import { dentroDaCerca, distanciaMetros, MARGEM_GPS_MAXIMA } from "../src/lib/geo";
+import {
+  descriptorValido,
+  distanciaEuclidiana,
+  identificar,
+  melhorDistancia,
+} from "../src/lib/face";
+import {
+  contarSalto,
+  decidirRota,
+  estourouSaltos,
+  LIMITE_SALTOS,
+  telaInicial,
+  type Sessao,
+} from "../src/lib/rotas";
 
 const FUSO = "America/Sao_Paulo";
 const JORNADA_PADRAO = {
@@ -260,6 +273,41 @@ describe("geolocalização", () => {
   });
 });
 
+describe("cerca virtual", () => {
+  const RAIO = 150;
+
+  it("aceita quem está dentro do raio", () => {
+    assert.equal(dentroDaCerca(0, RAIO, 10), true);
+    assert.equal(dentroDaCerca(100, RAIO, 10), true);
+    assert.equal(dentroDaCerca(RAIO, RAIO, 0), true);
+  });
+
+  it("bloqueia quem está fora do raio", () => {
+    assert.equal(dentroDaCerca(RAIO + 1, RAIO, 0), false);
+    assert.equal(dentroDaCerca(5000, RAIO, 10), false);
+  });
+
+  it("desconta a imprecisão do GPS a favor do funcionário", () => {
+    // 200 m de distância com ±80 m de erro: pode estar a 120 m, dentro do raio.
+    assert.equal(dentroDaCerca(200, RAIO, 80), true);
+  });
+
+  it("limita a margem do GPS para que não seja usada como brecha", () => {
+    // A precisão vem do navegador e poderia ser forjada; o teto impede que
+    // declarar um erro enorme libere a batida de qualquer lugar.
+    assert.equal(dentroDaCerca(5000, RAIO, 99999), false);
+    assert.equal(dentroDaCerca(RAIO + MARGEM_GPS_MAXIMA, RAIO, 99999), true);
+    assert.equal(dentroDaCerca(RAIO + MARGEM_GPS_MAXIMA + 1, RAIO, 99999), false);
+  });
+
+  it("trata precisão ausente ou negativa como zero", () => {
+    assert.equal(dentroDaCerca(200, RAIO, null), false);
+    assert.equal(dentroDaCerca(200, RAIO, undefined), false);
+    assert.equal(dentroDaCerca(200, RAIO, -500), false);
+    assert.equal(dentroDaCerca(100, RAIO, -500), true);
+  });
+});
+
 describe("comparação facial", () => {
   const base = Array.from({ length: 128 }, (_, i) => Math.sin(i) / 4);
 
@@ -285,5 +333,206 @@ describe("comparação facial", () => {
     const outro = base.map((v, i) => v + (i % 2 ? 0.4 : -0.4));
     const d = melhorDistancia(outro, [base]);
     assert.ok(d !== null && d > 0.5, `esperava distância grande, veio ${d}`);
+  });
+});
+
+describe("identificação no totem (1:N)", () => {
+  const LIMIAR = 0.45;
+  const MARGEM = 0.06;
+
+  /** Rostos sintéticos bem distintos entre si. */
+  const rosto = (semente: number) =>
+    Array.from({ length: 128 }, (_, i) => Math.sin(semente * 7.3 + i * 1.7) / 3);
+  /** Mesma pessoa em outra iluminação: pequena variação no vetor. */
+  const variacao = (d: number[], escala: number) =>
+    d.map((v, i) => v + Math.sin(i * 3.1) * escala);
+
+  const ana = rosto(1);
+  const bruno = rosto(2);
+  const carla = rosto(3);
+  const equipe = [
+    { referencia: "Ana", descriptors: [ana] },
+    { referencia: "Bruno", descriptors: [bruno] },
+    { referencia: "Carla", descriptors: [carla] },
+  ];
+
+  it("identifica a pessoa certa entre vários cadastrados", () => {
+    const r = identificar(variacao(bruno, 0.002), equipe, LIMIAR, MARGEM);
+    assert.equal(r.situacao, "IDENTIFICADO");
+    if (r.situacao === "IDENTIFICADO") assert.equal(r.referencia, "Bruno");
+  });
+
+  it("reconhece a pessoa por qualquer uma de suas capturas", () => {
+    // Ana cadastrou dois rostos; o segundo é o que aparece na câmera.
+    const anaDeOculos = variacao(ana, 0.2);
+    const comDuas = [
+      { referencia: "Ana", descriptors: [ana, anaDeOculos] },
+      { referencia: "Bruno", descriptors: [bruno] },
+    ];
+    const r = identificar(variacao(anaDeOculos, 0.001), comDuas, LIMIAR, MARGEM);
+    assert.equal(r.situacao, "IDENTIFICADO");
+    if (r.situacao === "IDENTIFICADO") assert.equal(r.referencia, "Ana");
+  });
+
+  it("recusa quem não está cadastrado em vez de chutar o mais parecido", () => {
+    const visitante = rosto(99);
+    const r = identificar(visitante, equipe, LIMIAR, MARGEM);
+    assert.equal(r.situacao, "DESCONHECIDO");
+  });
+
+  it("pede a matrícula quando dois funcionários ficam parecidos demais", () => {
+    // Dois cadastros quase idênticos: nenhum se destaca o suficiente.
+    const gemeo = variacao(ana, 0.01);
+    const comGemeos = [
+      { referencia: "Ana", descriptors: [ana] },
+      { referencia: "Irmã da Ana", descriptors: [gemeo] },
+    ];
+    const r = identificar(variacao(ana, 0.005), comGemeos, LIMIAR, MARGEM);
+    assert.equal(r.situacao, "AMBIGUO");
+  });
+
+  it("não exige margem quando só há uma pessoa cadastrada", () => {
+    const r = identificar(variacao(ana, 0.002), [{ referencia: "Ana", descriptors: [ana] }], LIMIAR, MARGEM);
+    assert.equal(r.situacao, "IDENTIFICADO");
+  });
+
+  it("devolve DESCONHECIDO quando ninguém tem rosto cadastrado", () => {
+    const r = identificar(ana, [], LIMIAR, MARGEM);
+    assert.equal(r.situacao, "DESCONHECIDO");
+    if (r.situacao === "DESCONHECIDO") assert.equal(r.melhorDistancia, null);
+  });
+
+  it("é mais rigoroso que a conferência 1:1", () => {
+    // Uma variação grande passa no limiar 1:1 (0.5) mas não no do totem (0.45).
+    const distante = variacao(ana, 0.055);
+    const d = melhorDistancia(distante, [ana]);
+    assert.ok(d !== null && d > LIMIAR && d < 0.5, `distância fora da faixa do teste: ${d}`);
+    const r = identificar(distante, equipe, LIMIAR, MARGEM);
+    assert.equal(r.situacao, "DESCONHECIDO");
+  });
+});
+
+describe("rotas — navegação sem laço", () => {
+  const TOTEM_NOVO = { papel: "TOTEM", trocarSenha: true, termoAceito: true };
+  const TOTEM = { papel: "TOTEM", trocarSenha: false, termoAceito: true };
+  const FUNC_NOVO = { papel: "FUNCIONARIO", trocarSenha: true, termoAceito: false };
+  const FUNC_SEM_TERMO = { papel: "FUNCIONARIO", trocarSenha: false, termoAceito: false };
+  const FUNC = { papel: "FUNCIONARIO", trocarSenha: false, termoAceito: true };
+  const ADMIN = { papel: "ADMIN", trocarSenha: false, termoAceito: true };
+
+  const PAGINAS = ["/", "/admin", "/totem", "/ponto", "/trocar-senha", "/termos", "/login"];
+
+  /**
+   * Segue os redirecionamentos como o navegador faria e devolve onde parou.
+   * Estoura se um caminho se repetir — que e exatamente o ERR_TOO_MANY_REDIRECTS.
+   */
+  function navegar(inicio: string, sessao: Sessao | null): string {
+    const trilha = [inicio];
+    let atual = inicio;
+    for (let i = 0; i < 10; i++) {
+      const d = decidirRota(atual, sessao);
+      if (d.tipo !== "redireciona") return atual;
+      atual = d.destino;
+      assert.ok(!trilha.includes(atual), `laço de redirecionamento: ${[...trilha, atual].join(" → ")}`);
+      trilha.push(atual);
+    }
+    assert.fail(`redirecionamentos demais: ${trilha.join(" → ")}`);
+  }
+
+  for (const [nome, sessao] of [
+    ["totem com senha provisória", TOTEM_NOVO],
+    ["totem", TOTEM],
+    ["funcionário com senha provisória", FUNC_NOVO],
+    ["funcionário sem termo aceito", FUNC_SEM_TERMO],
+    ["funcionário", FUNC],
+    ["administrador", ADMIN],
+    ["visitante sem sessão", null],
+  ] as const) {
+    it(`nenhuma página entra em laço para ${nome}`, () => {
+      for (const pagina of PAGINAS) navegar(pagina, sessao);
+    });
+  }
+
+  it("totem com senha provisória para na troca de senha, não no quiosque", () => {
+    // O caso que quebrou em produção: o portão de senha mandava para
+    // /trocar-senha e a regra de área devolvia para /totem, sem parar.
+    assert.equal(navegar("/trocar-senha", TOTEM_NOVO), "/trocar-senha");
+    assert.equal(navegar("/totem", TOTEM_NOVO), "/trocar-senha");
+    assert.equal(navegar("/", TOTEM_NOVO), "/trocar-senha");
+  });
+
+  it("cada papel cai na sua área depois de passar pelos portões", () => {
+    // A raiz não é área de ninguém: o middleware a libera e a própria página
+    // manda cada um para telaInicial(). A exceção é o totem, que o middleware
+    // já prende no quiosque antes de a página abrir.
+    assert.equal(navegar("/", ADMIN), "/");
+    assert.equal(navegar("/", FUNC), "/");
+    assert.equal(navegar("/", TOTEM), "/totem");
+
+    assert.equal(telaInicial("ADMIN"), "/admin");
+    assert.equal(telaInicial("FUNCIONARIO"), "/ponto");
+    assert.equal(telaInicial("TOTEM"), "/totem");
+
+    // Passados os portões, cada um abre a sua área sem novo desvio.
+    assert.equal(navegar("/admin", ADMIN), "/admin");
+    assert.equal(navegar("/ponto", FUNC), "/ponto");
+    assert.equal(navegar("/totem", TOTEM), "/totem");
+  });
+
+  it("o totem fica preso no quiosque", () => {
+    assert.equal(navegar("/admin", TOTEM), "/totem");
+    assert.equal(navegar("/ponto", TOTEM), "/totem");
+  });
+
+  it("quem não é ADMIN não entra no painel", () => {
+    assert.equal(navegar("/admin", FUNC), "/ponto");
+    assert.equal(navegar("/admin/funcionarios", FUNC), "/ponto");
+  });
+
+  it("o termo só segura depois que a senha já foi trocada", () => {
+    // Senão o próprio endpoint de troca de senha ficaria bloqueado pelo portão
+    // seguinte, e o funcionário novo não teria por onde começar.
+    assert.equal(decidirRota("/api/auth/trocar-senha", FUNC_NOVO).tipo, "segue");
+    assert.equal(navegar("/ponto", FUNC_SEM_TERMO), "/termos");
+    assert.equal(decidirRota("/api/termos/aceitar", FUNC_SEM_TERMO).tipo, "segue");
+  });
+
+  it("sem sessão, página vai para o login e API responde 401", () => {
+    assert.equal(navegar("/ponto", null), "/login");
+    assert.equal(decidirRota("/api/registros", null).tipo, "naoAutorizado");
+    assert.equal(decidirRota("/api/auth/login", null).tipo, "segue");
+  });
+
+  it("o logout funciona em qualquer portão", () => {
+    for (const s of [TOTEM_NOVO, FUNC_NOVO, FUNC_SEM_TERMO, TOTEM, ADMIN]) {
+      assert.equal(decidirRota("/api/auth/logout", s).tipo, "segue", `papel ${s.papel}`);
+    }
+  });
+});
+
+describe("rotas — rede de segurança contra laço", () => {
+  it("conta saltos a partir do cookie, tolerando ausência e lixo", () => {
+    assert.equal(contarSalto(undefined), 1);
+    assert.equal(contarSalto(""), 1);
+    assert.equal(contarSalto("abc"), 1);
+    assert.equal(contarSalto("-3"), 1);
+    assert.equal(contarSalto("2"), 3);
+  });
+
+  it("deixa passar as correntes legítimas de redirecionamento", () => {
+    // A maior corrente real tem 2 saltos (/ → /ponto → /termos).
+    for (let salto = 1; salto <= 3; salto++) assert.equal(estourouSaltos(salto), false);
+  });
+
+  it("corta quando os saltos passam do limite", () => {
+    assert.equal(estourouSaltos(LIMITE_SALTOS), false);
+    assert.equal(estourouSaltos(LIMITE_SALTOS + 1), true);
+  });
+
+  it("o login sempre abre, para a saída de emergência existir de fato", () => {
+    // Se o /login também redirecionasse, não haveria para onde escapar.
+    for (const s of [null, { papel: "TOTEM", trocarSenha: true, termoAceito: true }]) {
+      assert.equal(decidirRota("/login", s).tipo, "segue");
+    }
   });
 });

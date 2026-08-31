@@ -133,7 +133,8 @@ export default async function PaginaRelatorios({
                             .map(
                               (r) =>
                                 `${horaDe(r.momento, config.fusoHorario)}${
-                                  r.origem === "FACIAL" ? "" : "*"
+                                  // Só lançamento humano leva asterisco; totem é automático.
+                                  r.origem === "MANUAL" || r.origem === "AJUSTE" ? "*" : ""
                                 }`,
                             )
                             .join(" · ")}

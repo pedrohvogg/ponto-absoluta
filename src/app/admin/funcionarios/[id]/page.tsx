@@ -6,6 +6,7 @@ import { diaBr, hojeStr, horaDe, limitesDoMes, minutosParaHoras } from "@/lib/da
 import { espelhoDePonto } from "@/lib/consultas";
 import { totalizar } from "@/lib/jornada";
 import FormularioFuncionario from "@/components/FormularioFuncionario";
+import GerenciarBiometria from "@/components/GerenciarBiometria";
 import AcoesFuncionario from "@/components/AcoesFuncionario";
 import { EtiquetaOrigem, EtiquetaTipo } from "@/components/Etiquetas";
 
@@ -89,32 +90,26 @@ export default async function DetalheFuncionario({
       />
 
       <section className="cartao p-4">
-        <h2 className="mb-3 font-semibold text-slate-800">
-          Cadastro facial ({funcionario.biometrias.length})
-        </h2>
-        {funcionario.biometrias.length === 0 ? (
-          <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            Nenhuma captura. O funcionário precisa acessar <strong>Meu rosto</strong> e cadastrar o
-            próprio rosto antes de bater ponto.
+        <h2 className="mb-1 font-semibold text-slate-800">Cadastro facial</h2>
+        <p className="mb-3 text-xs text-slate-500">
+          {funcionario.email
+            ? "O funcionário pode cadastrar o próprio rosto em “Meu rosto”, ou você faz por ele aqui — com a pessoa presente, na frente da câmera deste computador."
+            : "Esta pessoa não tem login próprio: o cadastro do rosto é feito aqui, com ela presente na frente da câmera deste computador."}
+        </p>
+        <GerenciarBiometria
+          usuarioId={funcionario.id}
+          biometriasIniciais={funcionario.biometrias.map((b) => ({
+            id: b.id,
+            foto: b.fotoBase64,
+            criadoEm: b.criadoEm.toISOString(),
+          }))}
+        />
+        {funcionario.termoAceiteEm === null && funcionario.papel === "FUNCIONARIO" && (
+          <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            O termo de uso de imagem ainda não foi aceito. Cadastrar o rosto aqui é permitido, mas o
+            primeiro registro de ponto só acontece depois que a própria pessoa aceitar o termo — no
+            totem ou no login dela.
           </p>
-        ) : (
-          <ul className="flex flex-wrap gap-3">
-            {funcionario.biometrias.map((b) => (
-              <li key={b.id} className="w-28 overflow-hidden rounded-lg border border-slate-200">
-                {b.fotoBase64 ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={b.fotoBase64} alt="" className="aspect-square w-full scale-x-[-1] object-cover" />
-                ) : (
-                  <div className="flex aspect-square items-center justify-center bg-slate-100 text-2xl">
-                    🙂
-                  </div>
-                )}
-                <p className="p-1 text-center text-[10px] text-slate-500">
-                  {b.criadoEm.toLocaleDateString("pt-BR")}
-                </p>
-              </li>
-            ))}
-          </ul>
         )}
       </section>
 
@@ -150,7 +145,7 @@ export default async function DetalheFuncionario({
           inicial={{
             id: funcionario.id,
             nome: funcionario.nome,
-            email: funcionario.email,
+            email: funcionario.email ?? "",
             matricula: funcionario.matricula,
             cargo: funcionario.cargo ?? "",
             departamento: funcionario.departamento ?? "",

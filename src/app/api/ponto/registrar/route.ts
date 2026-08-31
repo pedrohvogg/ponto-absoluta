@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { usuarioDaApi } from "@/lib/auth";
 import { obterConfig } from "@/lib/config";
 import { descriptorValido, melhorDistancia, confiancaPercentual } from "@/lib/face";
-import { distanciaMetros } from "@/lib/geo";
+import { dentroDaCerca as avaliarCerca, distanciaMetros } from "@/lib/geo";
 import { diaDe, horaDe, limitesDoDia } from "@/lib/datas";
 import { ROTULO_TIPO, validarSequencia } from "@/lib/jornada";
 import { agenteDaRequisicao, ipDaRequisicao } from "@/lib/requisicao";
@@ -98,7 +98,9 @@ export async function POST(req: Request) {
     if (dados.latitude == null || dados.longitude == null) {
       return NextResponse.json(
         {
-          erro: "Precisamos da sua localização para registrar o ponto. Autorize o acesso à localização no navegador.",
+          erro:
+            "Precisamos da sua localização para registrar o ponto. Autorize o acesso à localização no navegador " +
+            "e verifique se o GPS do aparelho está ligado.",
           acao: "PERMITIR_LOCALIZACAO",
         },
         { status: 400 },
@@ -110,9 +112,8 @@ export async function POST(req: Request) {
       config.latitude,
       config.longitude,
     );
-    // A margem de erro do GPS entra a favor do funcionário.
-    const margem = Math.min(dados.precisaoMetros ?? 0, 100);
-    dentroDaCerca = distanciaDaEmpresa - margem <= config.raioMetros;
+    // A margem de erro do GPS entra a favor do funcionário, com teto (ver geo.ts).
+    dentroDaCerca = avaliarCerca(distanciaDaEmpresa, config.raioMetros, dados.precisaoMetros);
 
     if (!dentroDaCerca && config.geofenceBloqueia) {
       await prisma.auditoria.create({
@@ -125,7 +126,10 @@ export async function POST(req: Request) {
       });
       return NextResponse.json(
         {
-          erro: `Você está a ${distanciaDaEmpresa} m do local de trabalho (limite: ${config.raioMetros} m). O registro só é permitido no local.`,
+          erro:
+            `Você está a ${distanciaDaEmpresa} m do local de trabalho (limite: ${config.raioMetros} m) e o registro só é permitido no local. ` +
+            "Se você já está no trabalho, o GPS pode ter errado: saia de perto de paredes/coberturas e tente de novo. " +
+            "Persistindo, avise o responsável — a tentativa já apareceu no painel dele e o ponto pode ser lançado manualmente.",
         },
         { status: 403 },
       );

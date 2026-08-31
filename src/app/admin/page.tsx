@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { panoramaDoDia } from "@/lib/consultas";
-import { diaBr, hojeStr, horaDe, minutosParaHoras } from "@/lib/datas";
+import { diaBr, hojeStr, horaDe, limitesDoDia, minutosParaHoras } from "@/lib/datas";
 import { obterConfig } from "@/lib/config";
 import { EtiquetaSituacao } from "@/components/Etiquetas";
 
@@ -17,9 +17,26 @@ export default async function PainelAdmin({
   const dia = diaParam ?? hojeStr(config.fusoHorario);
   const ehHoje = dia === hojeStr(config.fusoHorario);
 
-  const [{ linhas }, pendentes] = await Promise.all([
+  const { inicio, fim } = limitesDoDia(dia, config.fusoHorario);
+
+  const [{ linhas }, pendentes, bloqueios] = await Promise.all([
     panoramaDoDia(dia),
     prisma.solicitacao.count({ where: { status: "PENDENTE" } }),
+    // Tentativas que NÃO viraram registro. Sem isso, quem foi barrado pela
+    // cerca ou pelo reconhecimento facial fica invisível para o RH.
+    prisma.auditoria.findMany({
+      where: {
+        acao: { in: ["PONTO_FORA_DA_CERCA", "FACE_RECUSADA"] },
+        criadoEm: { gte: inicio, lt: fim },
+      },
+      orderBy: { criadoEm: "desc" },
+      select: {
+        id: true,
+        acao: true,
+        criadoEm: true,
+        usuario: { select: { nome: true } },
+      },
+    }),
   ]);
 
   const trabalhando = linhas.filter((l) => l.situacao === "TRABALHANDO").length;
@@ -28,6 +45,26 @@ export default async function PainelAdmin({
   const semBiometria = linhas.filter((l) => !l.temBiometria);
   const foraDaCerca = linhas.filter((l) => l.foraDaCerca);
   const atrasados = linhas.filter((l) => l.jornada.atrasoMinutos > 0);
+
+  // Agrupa por pessoa: 5 tentativas do mesmo funcionário são um problema só.
+  const porPessoa = new Map<string, { nome: string; tentativas: number; motivo: string; hora: string }>();
+  for (const b of bloqueios) {
+    const nome = b.usuario?.nome ?? "Desconhecido";
+    const atual = porPessoa.get(nome);
+    const motivo = b.acao === "PONTO_FORA_DA_CERCA" ? "fora do local" : "rosto não reconhecido";
+    if (atual) {
+      atual.tentativas += 1;
+      if (!atual.motivo.includes(motivo)) atual.motivo += ` e ${motivo}`;
+    } else {
+      porPessoa.set(nome, {
+        nome,
+        tentativas: 1,
+        motivo,
+        hora: horaDe(b.criadoEm, config.fusoHorario),
+      });
+    }
+  }
+  const tentativasBloqueadas = [...porPessoa.values()];
 
   return (
     <div className="space-y-6">
@@ -65,6 +102,34 @@ export default async function PainelAdmin({
           href="/admin/ajustes"
         />
       </div>
+
+      {tentativasBloqueadas.length > 0 && (
+        <div className="rounded-xl border border-red-300 bg-red-50 p-4">
+          <h3 className="text-sm font-semibold text-red-900">
+            ⚠️ Não conseguiram bater o ponto ({tentativasBloqueadas.length})
+          </h3>
+          <p className="mt-0.5 text-xs text-red-800">
+            Estas pessoas tentaram registrar e foram barradas. Se a tentativa foi legítima,
+            lance o ponto manualmente em Registros.
+          </p>
+          <ul className="mt-2 space-y-1 text-sm text-red-900">
+            {tentativasBloqueadas.map((t) => (
+              <li key={t.nome} className="flex flex-wrap items-baseline gap-x-2">
+                <span className="font-medium">{t.nome}</span>
+                <span className="text-xs">
+                  {t.motivo} · {t.tentativas} tentativa(s) · última às {t.hora}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <Link
+            href="/admin/registros"
+            className="mt-2 inline-block text-sm font-medium text-red-900 underline"
+          >
+            Lançar ponto manualmente →
+          </Link>
+        </div>
+      )}
 
       {(semBiometria.length > 0 || foraDaCerca.length > 0 || atrasados.length > 0) && (
         <div className="grid gap-3 md:grid-cols-3">

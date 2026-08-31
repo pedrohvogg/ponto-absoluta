@@ -13,7 +13,8 @@ export function EtiquetaTipo({ tipo }: { tipo: TipoRegistro }) {
 }
 
 const ROTULO_ORIGEM: Record<OrigemRegistro, string> = {
-  FACIAL: "Facial",
+  FACIAL: "Facial (app)",
+  TOTEM: "Totem da loja",
   MANUAL: "Manual (admin)",
   AJUSTE: "Ajuste aprovado",
 };
@@ -22,9 +23,11 @@ export function EtiquetaOrigem({ origem }: { origem: OrigemRegistro }) {
   const cor =
     origem === "FACIAL"
       ? "bg-marca-100 text-marca-800"
-      : origem === "MANUAL"
-        ? "bg-purple-100 text-purple-800"
-        : "bg-teal-100 text-teal-800";
+      : origem === "TOTEM"
+        ? "bg-indigo-100 text-indigo-800"
+        : origem === "MANUAL"
+          ? "bg-purple-100 text-purple-800"
+          : "bg-teal-100 text-teal-800";
   return <span className={`etiqueta ${cor}`}>{ROTULO_ORIGEM[origem]}</span>;
 }
 

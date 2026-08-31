@@ -98,11 +98,16 @@ export default async function ListaFuncionarios({
                         {f.papel === "ADMIN" && (
                           <span className="etiqueta bg-purple-100 text-purple-800">admin</span>
                         )}
+                        {f.papel === "TOTEM" && (
+                          <span className="etiqueta bg-indigo-100 text-indigo-800">totem</span>
+                        )}
                         {!f.ativo && (
                           <span className="etiqueta bg-slate-200 text-slate-600">inativo</span>
                         )}
                       </div>
-                      <p className="text-xs text-slate-500">{f.email}</p>
+                      <p className="text-xs text-slate-500">
+                        {f.email ?? "sem login — bate ponto só no totem"}
+                      </p>
                     </td>
                     <td className="px-4 py-2 font-mono text-xs">{f.matricula}</td>
                     <td className="px-4 py-2 text-slate-600">
@@ -110,7 +115,7 @@ export default async function ListaFuncionarios({
                       {f.departamento ? ` · ${f.departamento}` : ""}
                     </td>
                     <td className="px-4 py-2">
-                      {f.papel === "ADMIN" ? (
+                      {f.papel !== "FUNCIONARIO" ? (
                         <span className="text-xs text-slate-400">não se aplica</span>
                       ) : f._count.biometrias > 0 ? (
                         <span className="etiqueta bg-emerald-100 text-emerald-800">
@@ -123,7 +128,9 @@ export default async function ListaFuncionarios({
                     <td className="px-4 py-2 text-xs text-slate-500">
                       {f.ultimoLogin
                         ? f.ultimoLogin.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })
-                        : "nunca acessou"}
+                        : f.email
+                          ? "nunca acessou"
+                          : "—"}
                     </td>
                     <td className="px-4 py-2 text-right">
                       <Link
