@@ -188,6 +188,11 @@ Tipos de batida: entrada, saída para intervalo, retorno do intervalo e saída. 
 sistema recusa sequências impossíveis (duas entradas seguidas, saída sem entrada,
 retorno sem intervalo aberto).
 
+Antes de bater o ponto, a tela mostra o que está em aberto: dias passados sem ponto
+completo (com botão para pedir o ajuste dali mesmo) e ajustes propostos pelo
+administrador esperando o de-acordo. Quem bate ponto só pelo totem vê o mesmo aviso
+na tela do tablet, logo depois de registrar.
+
 ### Administrador
 
 | Tela | O que faz |
@@ -195,7 +200,9 @@ retorno sem intervalo aberto).
 | **Painel** | Quem está trabalhando, em intervalo ou sem registro no dia; alertas de atraso, cadastro facial pendente e batida fora do local |
 | **Funcionários** | Criar funcionário com ou sem login próprio, criar a conta do totem, cadastrar o rosto de cada um, editar jornada, resetar senha, desativar acesso |
 | **Registros** | Todas as batidas com foto, confiança da validação e mapa da localização; lançamento manual e edição com motivo obrigatório |
-| **Ajustes** | Aprovar ou recusar solicitações — aprovar aplica a mudança no espelho automaticamente |
+| **Horas** | Saldo de cada funcionário lado a lado no período: trabalhado, previsto, extras, débito, faltas, abonos e o que falta regularizar |
+| **Férias** | Agendar e validar períodos de férias, folga, atestado ou licença |
+| **Ajustes** | Aprovar ou recusar solicitações — e propor um ajuste, que o funcionário confirma no próximo registro |
 | **Relatórios** | Espelho de ponto por período, com exportação CSV e impressão/PDF (com linhas de assinatura) |
 | **Configurações** | Nome e fuso da empresa, cerca virtual, rigor facial, tolerância de atraso e auditoria recente |
 
@@ -207,11 +214,36 @@ retorno sem intervalo aberto).
   bater a saída) não gera tempo, apenas marca o dia como "em aberto".
 - **Saldo**: trabalhado − previsto. Dias fora da escala não cobram jornada, e o que
   for trabalhado neles conta integralmente como extra.
+- **Escala por dia da semana**: cada funcionário pode ter entrada, saída, intervalo e
+  carga próprios em cada dia — o caso do sábado de meio expediente. Quem não tem
+  horário específico continua usando o padrão único do cadastro.
+- **Admissão**: dias anteriores à data de admissão não cobram jornada. Sem a data
+  preenchida, o período pedido é cobrado inteiro (comportamento antigo).
+- **Ausências**: férias, folga, atestado ou licença **validadas** zeram o previsto do
+  dia — não viram falta nem débito. Trabalhar durante o período conta como extra.
+  Enquanto o período está apenas *agendado*, a jornada continua sendo cobrada:
+  agendar e abonar são dois atos separados, cada um com registro de quem fez.
+- **Pontos pendentes**: um dia passado que deveria ter expediente e ficou sem batida,
+  ou com entrada sem saída, aparece como pendência — no alerta do funcionário e na
+  coluna "a resolver" do painel de horas. O dia corrente nunca conta como pendente.
 - **Atraso**: diferença entre a primeira *entrada* e o horário previsto, além da
   tolerância. Dias sem entrada registrada não geram atraso.
 - **Competência**: a batida é gravada em UTC, mas o dia é calculado no fuso da
   empresa — quem trabalha atravessando a meia-noite não tem a jornada partida.
 - **Relatórios** nunca contam dias futuros como débito.
+
+### O CSV e o Excel
+
+O espelho em CSV sai com BOM e separador `;`, para o Excel em português abrir
+direto. Dois detalhes que existem por causa do Excel:
+
+- Saldos negativos em `HH:mm` usam o sinal de menos tipográfico (`−08:00`). Com o
+  hífen comum, o Excel trata a célula como fórmula e mostra `#####`.
+- Há uma coluna **Saldo (horas)** em decimal com vírgula (`-8,00`), que o Excel lê
+  como número e soma. Essa é a coluna para somatórios; a de `HH:mm` é para ler.
+
+Nomes e observações que comecem com `=`, `+`, `-` ou `@` são neutralizados, para um
+cadastro não virar fórmula executável na planilha de quem abrir o arquivo.
 
 ## Cerca virtual (geolocalização)
 

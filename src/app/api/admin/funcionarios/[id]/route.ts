@@ -103,6 +103,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         saidaPrevista: dados.saidaPrevista,
         intervaloMinutos: dados.intervaloMinutos,
         diasSemana: dados.diasSemana,
+        admissaoEm: dados.admissaoEm === undefined ? undefined : dados.admissaoEm || null,
+        // O formulário sempre manda a semana inteira ou uma lista vazia, então
+        // trocar o conjunto todo evita sobrar um dia órfão de uma edição antiga.
+        horarios:
+          dados.horarios === undefined
+            ? undefined
+            : { deleteMany: {}, create: dados.horarios },
       },
       select: { id: true, nome: true, ativo: true },
     });

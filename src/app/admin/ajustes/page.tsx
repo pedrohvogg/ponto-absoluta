@@ -1,10 +1,21 @@
 import { prisma } from "@/lib/prisma";
-import { diaBr } from "@/lib/datas";
+import { obterConfig } from "@/lib/config";
+import { diaBr, hojeStr } from "@/lib/datas";
 import { ROTULO_TIPO } from "@/lib/jornada";
 import { EtiquetaStatus } from "@/components/Etiquetas";
 import DecidirAjuste from "@/components/DecidirAjuste";
+import ProporAjuste from "@/components/ProporAjuste";
 
 export const dynamic = "force-dynamic";
+
+/** Rótulo de cada filtro: gerar a partir do enum daria "Aguardando_funcionarios". */
+const ROTULO_FILTRO: Record<string, string> = {
+  PENDENTE: "Pendentes",
+  AGUARDANDO_FUNCIONARIO: "Aguardando funcionário",
+  APROVADA: "Aprovadas",
+  REJEITADA: "Rejeitadas",
+  TODAS: "Todas",
+};
 
 const ROTULO_ACAO = {
   INCLUIR: "Incluir batida",
@@ -18,9 +29,25 @@ export default async function PaginaAjustes({
   searchParams: Promise<{ status?: string }>;
 }) {
   const { status = "PENDENTE" } = await searchParams;
+  const config = await obterConfig();
+
+  const funcionarios = await prisma.usuario.findMany({
+    where: { papel: "FUNCIONARIO", ativo: true },
+    orderBy: { nome: "asc" },
+    select: { id: true, nome: true, matricula: true },
+  });
 
   const solicitacoes = await prisma.solicitacao.findMany({
-    where: status === "TODAS" ? {} : { status: status as "PENDENTE" | "APROVADA" | "REJEITADA" },
+    where:
+      status === "TODAS"
+        ? {}
+        : {
+            status: status as
+              | "PENDENTE"
+              | "AGUARDANDO_FUNCIONARIO"
+              | "APROVADA"
+              | "REJEITADA",
+          },
     orderBy: [{ status: "asc" }, { criadoEm: "desc" }],
     take: 200,
     include: {
@@ -34,12 +61,16 @@ export default async function PaginaAjustes({
       <div>
         <h1 className="text-xl font-bold text-slate-900">Solicitações de ajuste</h1>
         <p className="text-sm text-slate-500">
-          Pedidos de inclusão, correção ou exclusão de batidas feitos pelos funcionários.
+          Pedidos de inclusão, correção ou exclusão de batidas. O funcionário pede e você decide;
+          você também pode propor, e nesse caso o ajuste só vale depois que ele confirmar no
+          próximo registro.
         </p>
       </div>
 
-      <div className="flex gap-2">
-        {["PENDENTE", "APROVADA", "REJEITADA", "TODAS"].map((s) => (
+      <ProporAjuste funcionarios={funcionarios} hoje={hojeStr(config.fusoHorario)} />
+
+      <div className="flex flex-wrap gap-2">
+        {["PENDENTE", "AGUARDANDO_FUNCIONARIO", "APROVADA", "REJEITADA", "TODAS"].map((s) => (
           <a
             key={s}
             href={`/admin/ajustes?status=${s}`}
@@ -47,7 +78,7 @@ export default async function PaginaAjustes({
               status === s ? "bg-marca-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"
             }`}
           >
-            {s === "TODAS" ? "Todas" : s.charAt(0) + s.slice(1).toLowerCase() + "s"}
+            {ROTULO_FILTRO[s] ?? s}
           </a>
         ))}
       </div>

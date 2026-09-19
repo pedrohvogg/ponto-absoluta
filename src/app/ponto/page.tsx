@@ -2,10 +2,13 @@ import Link from "next/link";
 import { exigirFuncionario } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { obterConfig } from "@/lib/config";
-import { diaBr, hojeStr, limitesDoDia, minutosParaHoras } from "@/lib/datas";
+import { diaBr, diaSemanaCurto, hojeStr, limitesDoDia, minutosParaHoras } from "@/lib/datas";
 import { calcularJornada, proximoTipo } from "@/lib/jornada";
+import { abonoDoDia, ROTULO_AUSENCIA } from "@/lib/ausencia";
+import { pendenciasDoFuncionario } from "@/lib/pendencias";
 import Cabecalho from "@/components/Cabecalho";
 import PainelPonto from "@/components/PainelPonto";
+import AlertaPendencias from "@/components/AlertaPendencias";
 
 export const dynamic = "force-dynamic";
 
@@ -15,16 +18,28 @@ export default async function PaginaPonto() {
   const dia = hojeStr(config.fusoHorario);
   const { inicio, fim } = limitesDoDia(dia, config.fusoHorario);
 
-  const [usuario, registros, biometrias] = await Promise.all([
+  const [usuario, registros, biometrias, ausenciasHoje, pendencias] = await Promise.all([
     prisma.usuario.findUniqueOrThrow({
       where: { id: sessao.id },
       select: {
         nome: true,
         matricula: true,
+        admissaoEm: true,
         cargaDiariaMinutos: true,
         entradaPrevista: true,
         saidaPrevista: true,
+        intervaloMinutos: true,
         diasSemana: true,
+        horarios: {
+          select: {
+            diaSemana: true,
+            trabalha: true,
+            entrada: true,
+            saida: true,
+            intervaloMinutos: true,
+            cargaMinutos: true,
+          },
+        },
       },
     }),
     prisma.registro.findMany({
@@ -33,11 +48,19 @@ export default async function PaginaPonto() {
       select: { id: true, tipo: true, momento: true, origem: true, dentroDaCerca: true },
     }),
     prisma.biometria.count({ where: { usuarioId: sessao.id } }),
+    prisma.ausencia.findMany({
+      where: { usuarioId: sessao.id, inicio: { lte: dia }, fim: { gte: dia } },
+      select: { id: true, tipo: true, inicio: true, fim: true, status: true },
+    }),
+    pendenciasDoFuncionario(sessao.id),
   ]);
 
+  const abono = abonoDoDia(ausenciasHoje, dia);
   const jornada = calcularJornada(dia, registros, usuario, {
     fuso: config.fusoHorario,
     toleranciaMinutos: config.toleranciaMinutos,
+    abono,
+    hoje: dia,
   });
 
   return (
@@ -59,6 +82,42 @@ export default async function PaginaPonto() {
             </p>
           </div>
         </div>
+
+        {abono && (
+          <div className="cartao border-emerald-200 bg-emerald-50 p-4">
+            <p className="text-sm font-semibold text-emerald-900">
+              Hoje é dia de {ROTULO_AUSENCIA[abono.tipo].toLowerCase()}
+            </p>
+            <p className="mt-1 text-sm text-emerald-800">
+              O período de {diaBr(abono.inicio)} a {diaBr(abono.fim)} está abonado: não bater ponto
+              hoje não gera desconto. Se você trabalhar, registre normalmente e as horas contam
+              como extra.
+            </p>
+          </div>
+        )}
+
+        <AlertaPendencias
+          propostas={pendencias.propostas.map((p) => ({
+            id: p.id,
+            dia: p.dia,
+            diaBr: diaBr(p.dia),
+            acao: p.acao,
+            tipo: p.tipo as never,
+            horario: p.horario,
+            motivo: p.motivo,
+            propostaPor: p.propostaPor,
+          }))}
+          dias={pendencias.dias.map((d) => ({
+            dia: d.dia,
+            diaBr: diaBr(d.dia),
+            diaSemana: diaSemanaCurto(d.dia),
+            motivo: d.motivo,
+            entradaPrevista: d.escala.entrada,
+            saidaPrevista: d.escala.saida,
+            batidas: d.batidas.map((b) => ({ tipo: b.tipo, hora: b.hora })),
+            jaSolicitado: d.jaSolicitado,
+          }))}
+        />
 
         {biometrias === 0 ? (
           <div className="cartao border-amber-200 bg-amber-50 p-5 text-center">

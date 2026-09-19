@@ -31,6 +31,9 @@ enum OrigemRegistro {
 
 enum StatusSolicitacao {
   PENDENTE
+  /// Ajuste proposto pelo administrador, esperando o funcionario confirmar no
+  /// proximo registro. So vira APROVADA depois do de-acordo dele.
+  AGUARDANDO_FUNCIONARIO
   APROVADA
   REJEITADA
 }
@@ -39,6 +42,22 @@ enum AcaoSolicitacao {
   INCLUIR
   ALTERAR
   EXCLUIR
+}
+
+enum TipoAusencia {
+  FERIAS
+  FOLGA
+  ATESTADO
+  LICENCA
+  OUTRO
+}
+
+enum StatusAusencia {
+  /// Agendada pelo administrador, ainda sem efeito sobre a jornada.
+  AGENDADA
+  /// Validada: os dias do periodo deixam de cobrar jornada.
+  VALIDADA
+  CANCELADA
 }
 
 model Usuario {
@@ -64,6 +83,13 @@ model Usuario {
   termoAceiteEm DateTime?
 
   // ---- Jornada de trabalho ----
+  /// Data de admissao (YYYY-MM-DD no fuso da empresa). Antes dela o funcionario
+  /// nao devia jornada nenhuma, entao o relatorio nao cobra falta desses dias.
+  /// Nulo mantem o comportamento antigo: cobra o periodo inteiro pedido.
+  admissaoEm String?
+  /// Padrao da jornada, usado nos dias da semana sem horario proprio em
+  /// HorarioDia. Continua valendo sozinho para quem foi cadastrado antes de
+  /// existir horario por dia.
   /// Minutos de trabalho previstos por dia (ex.: 480 = 8h).
   cargaDiariaMinutos Int    @default(480)
   /// Horario previsto de entrada no formato HH:mm.
@@ -80,13 +106,69 @@ model Usuario {
   atualizadoEm DateTime @updatedAt
 
   biometrias    Biometria[]
+  horarios      HorarioDia[]
   registros     Registro[]      @relation("RegistrosDoUsuario")
   registrosFeitos Registro[]    @relation("RegistrosLancadosPor")
   solicitacoes  Solicitacao[]   @relation("SolicitacoesDoUsuario")
   revisoes      Solicitacao[]   @relation("SolicitacoesRevisadasPor")
+  propostas     Solicitacao[]   @relation("SolicitacoesPropostasPor")
+  ausencias         Ausencia[]  @relation("AusenciasDoUsuario")
+  ausenciasCriadas  Ausencia[]  @relation("AusenciasCriadasPor")
+  ausenciasValidadas Ausencia[] @relation("AusenciasValidadasPor")
   auditoria     Auditoria[]
 
   @@index([papel, ativo])
+}
+
+/// Jornada de um dia da semana especifico. Existe para a loja que abre em
+/// horario diferente no sabado: sem isso, um unico par entrada/saida teria de
+/// servir para a semana toda. A ausencia de linha para um dia significa "usa o
+/// padrao do Usuario", o que mantem funcionando quem foi cadastrado antes.
+model HorarioDia {
+  id        String  @id @default(cuid())
+  usuarioId String
+  usuario   Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  /// 0=domingo ... 6=sabado
+  diaSemana Int
+  /// Falso marca folga: o dia nao cobra jornada.
+  trabalha  Boolean @default(true)
+  entrada   String  @default("08:00")
+  saida     String  @default("17:00")
+  intervaloMinutos Int @default(60)
+  /// Minutos previstos no dia. Normalmente saida - entrada - intervalo, mas
+  /// fica editavel porque a jornada contratada nem sempre bate com o relogio.
+  cargaMinutos Int  @default(480)
+
+  @@unique([usuarioId, diaSemana])
+  @@index([usuarioId])
+}
+
+/// Periodo sem expediente combinado com antecedencia (ferias, folga, atestado).
+/// Depois de VALIDADA, os dias do intervalo param de cobrar jornada e deixam de
+/// contar como falta ou ponto pendente.
+model Ausencia {
+  id        String  @id @default(cuid())
+  usuarioId String
+  usuario   Usuario @relation("AusenciasDoUsuario", fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  tipo   TipoAusencia   @default(FERIAS)
+  /// Competencias YYYY-MM-DD, inclusive nas duas pontas.
+  inicio String
+  fim    String
+  status StatusAusencia @default(AGENDADA)
+
+  observacao String? @db.Text
+
+  criadoPorId String?
+  criadoPor   Usuario? @relation("AusenciasCriadasPor", fields: [criadoPorId], references: [id], onDelete: SetNull)
+  validadoPorId String?
+  validadoPor   Usuario? @relation("AusenciasValidadasPor", fields: [validadoPorId], references: [id], onDelete: SetNull)
+  validadoEm    DateTime?
+
+  criadoEm DateTime @default(now())
+
+  @@index([usuarioId, inicio, fim])
+  @@index([status])
 }
 
 /// Assinatura facial (descriptor de 128 dimensoes gerado pelo face-api no navegador).
@@ -157,6 +239,12 @@ model Solicitacao {
   motivo String @db.Text
   status StatusSolicitacao @default(PENDENTE)
 
+  /// Preenchido quando quem propos o ajuste foi o administrador. Nesse caminho
+  /// a solicitacao nasce AGUARDANDO_FUNCIONARIO e o funcionario da o de-acordo
+  /// no proximo registro — o desconto de horas nunca entra as escondidas.
+  propostaPorId String?
+  propostaPor   Usuario? @relation("SolicitacoesPropostasPor", fields: [propostaPorId], references: [id], onDelete: SetNull)
+
   respostaAdmin String?   @db.Text
   revisadoPorId String?
   revisadoPor   Usuario?  @relation("SolicitacoesRevisadasPor", fields: [revisadoPorId], references: [id], onDelete: SetNull)
@@ -166,6 +254,7 @@ model Solicitacao {
 
   @@index([status])
   @@index([usuarioId, dia])
+  @@index([usuarioId, status])
 }
 
 /// Parametros globais da empresa (linha unica, id = "default").

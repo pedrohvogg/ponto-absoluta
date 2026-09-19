@@ -6,6 +6,7 @@ import {
   decidirRota,
   ERRO_LACO,
   estourouSaltos,
+  MENSAGEM_BLOQUEIO,
   type Sessao,
 } from "@/lib/rotas";
 
@@ -39,6 +40,15 @@ export async function middleware(req: NextRequest) {
 
   if (decisao.tipo === "naoAutorizado") {
     return NextResponse.json({ erro: "Sessão expirada." }, { status: 401 });
+  }
+
+  if (decisao.tipo === "bloqueado") {
+    // 428: o pedido é válido, mas falta uma condição prévia. O campo `acao` diz
+    // ao cliente para onde mandar a pessoa.
+    return NextResponse.json(
+      { erro: MENSAGEM_BLOQUEIO[decisao.motivo], acao: decisao.motivo },
+      { status: 428 },
+    );
   }
 
   if (decisao.tipo === "redireciona") {

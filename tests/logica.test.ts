@@ -19,11 +19,14 @@ import {
   identificar,
   melhorDistancia,
 } from "../src/lib/face";
+import { cargaSemanal, cargaSugerida, escalaDaSemana, escalaDoDia } from "../src/lib/escala";
+import { abonoDoDia, conflita, diasCorridos } from "../src/lib/ausencia";
 import {
   contarSalto,
   decidirRota,
   estourouSaltos,
   LIMITE_SALTOS,
+  MENSAGEM_BLOQUEIO,
   telaInicial,
   type Sessao,
 } from "../src/lib/rotas";
@@ -32,6 +35,8 @@ const FUSO = "America/Sao_Paulo";
 const JORNADA_PADRAO = {
   cargaDiariaMinutos: 480,
   entradaPrevista: "08:00",
+  saidaPrevista: "17:00",
+  intervaloMinutos: 60,
   diasSemana: [1, 2, 3, 4, 5],
 };
 const OPCOES = { fuso: FUSO, toleranciaMinutos: 10 };
@@ -533,6 +538,288 @@ describe("rotas — rede de segurança contra laço", () => {
     // Se o /login também redirecionasse, não haveria para onde escapar.
     for (const s of [null, { papel: "TOTEM", trocarSenha: true, termoAceito: true }]) {
       assert.equal(decidirRota("/login", s).tipo, "segue");
+    }
+  });
+});
+
+describe("escala — horário por dia da semana", () => {
+  const PADRAO = {
+    cargaDiariaMinutos: 480,
+    entradaPrevista: "08:00",
+    saidaPrevista: "17:00",
+    intervaloMinutos: 60,
+    diasSemana: [1, 2, 3, 4, 5],
+  };
+
+  it("sem horário próprio, cai no padrão do funcionário", () => {
+    const seg = escalaDoDia(PADRAO, [], 1);
+    assert.equal(seg.trabalha, true);
+    assert.equal(seg.cargaMinutos, 480);
+    assert.equal(seg.proprio, false);
+
+    const sab = escalaDoDia(PADRAO, [], 6);
+    assert.equal(sab.trabalha, false);
+    assert.equal(sab.cargaMinutos, 0);
+  });
+
+  it("o horário do dia vence o padrão", () => {
+    // O caso que motivou a mudança: sábado com meio expediente.
+    const sabado = {
+      diaSemana: 6,
+      trabalha: true,
+      entrada: "09:00",
+      saida: "13:00",
+      intervaloMinutos: 0,
+      cargaMinutos: 240,
+    };
+    const e = escalaDoDia(PADRAO, [sabado], 6);
+    assert.equal(e.trabalha, true);
+    assert.equal(e.entrada, "09:00");
+    assert.equal(e.cargaMinutos, 240);
+    assert.equal(e.proprio, true);
+  });
+
+  it("dia marcado como folga não cobra carga, mesmo com minutos gravados", () => {
+    const e = escalaDoDia(PADRAO, [
+      { diaSemana: 3, trabalha: false, entrada: "08:00", saida: "17:00", intervaloMinutos: 60, cargaMinutos: 480 },
+    ], 3);
+    assert.equal(e.trabalha, false);
+    assert.equal(e.cargaMinutos, 0);
+  });
+
+  it("sugere a carga a partir do relógio, descontando o intervalo", () => {
+    assert.equal(cargaSugerida("08:00", "17:00", 60), 480);
+    assert.equal(cargaSugerida("09:00", "13:00", 0), 240);
+    // Turno que vira a meia-noite não pode devolver negativo.
+    assert.equal(cargaSugerida("22:00", "06:00", 60), 420);
+    // Intervalo maior que o turno zera em vez de ficar negativo.
+    assert.equal(cargaSugerida("08:00", "09:00", 120), 0);
+  });
+
+  it("soma a semana usando a escala resolvida", () => {
+    const comSabado = [
+      { diaSemana: 6, trabalha: true, entrada: "09:00", saida: "13:00", intervaloMinutos: 0, cargaMinutos: 240 },
+    ];
+    assert.equal(cargaSemanal(escalaDaSemana(PADRAO, comSabado)), 5 * 480 + 240);
+  });
+
+  it("o cálculo do dia usa a escala do sábado, e não o padrão", () => {
+    const usuario = {
+      ...PADRAO,
+      horarios: [
+        { diaSemana: 6, trabalha: true, entrada: "09:00", saida: "13:00", intervaloMinutos: 0, cargaMinutos: 240 },
+      ],
+    };
+    // 2026-08-15 é sábado.
+    const j = calcularJornada(
+      "2026-08-15",
+      [batida("ENTRADA", "2026-08-15", "09:00"), batida("SAIDA", "2026-08-15", "13:00")],
+      usuario,
+      OPCOES,
+    );
+    assert.equal(j.diaUtil, true);
+    assert.equal(j.previsto, 240);
+    assert.equal(j.saldo, 0);
+  });
+
+  it("aplica o atraso contra a entrada do próprio dia", () => {
+    const usuario = {
+      ...PADRAO,
+      horarios: [
+        { diaSemana: 6, trabalha: true, entrada: "09:00", saida: "13:00", intervaloMinutos: 0, cargaMinutos: 240 },
+      ],
+    };
+    // Chegar 09:20 no sábado é atraso de 20 min, não adiantamento de 8h.
+    const j = calcularJornada("2026-08-15", [batida("ENTRADA", "2026-08-15", "09:20")], usuario, OPCOES);
+    assert.equal(j.atrasoMinutos, 20);
+  });
+});
+
+describe("ausência — abono de jornada", () => {
+  const FERIAS = {
+    tipo: "FERIAS" as const,
+    inicio: "2026-08-10",
+    fim: "2026-08-14",
+    status: "VALIDADA" as const,
+  };
+
+  it("só a ausência validada abona", () => {
+    assert.equal(abonoDoDia([FERIAS], "2026-08-12")?.tipo, "FERIAS");
+    assert.equal(abonoDoDia([{ ...FERIAS, status: "AGENDADA" }], "2026-08-12"), null);
+    assert.equal(abonoDoDia([{ ...FERIAS, status: "CANCELADA" }], "2026-08-12"), null);
+  });
+
+  it("respeita as bordas do período", () => {
+    assert.notEqual(abonoDoDia([FERIAS], "2026-08-10"), null);
+    assert.notEqual(abonoDoDia([FERIAS], "2026-08-14"), null);
+    assert.equal(abonoDoDia([FERIAS], "2026-08-09"), null);
+    assert.equal(abonoDoDia([FERIAS], "2026-08-15"), null);
+  });
+
+  it("dia abonado não cobra jornada nem vira débito", () => {
+    const semAbono = calcularJornada("2026-08-12", [], JORNADA_PADRAO, OPCOES);
+    assert.equal(semAbono.previsto, 480);
+    assert.equal(semAbono.devendo, 480);
+
+    const comAbono = calcularJornada("2026-08-12", [], JORNADA_PADRAO, { ...OPCOES, abono: FERIAS });
+    assert.equal(comAbono.previsto, 0);
+    assert.equal(comAbono.devendo, 0);
+    assert.equal(comAbono.saldo, 0);
+    assert.equal(comAbono.cobra, false);
+  });
+
+  it("trabalhar durante as férias conta como extra", () => {
+    const j = calcularJornada(
+      "2026-08-12",
+      [batida("ENTRADA", "2026-08-12", "08:00"), batida("SAIDA", "2026-08-12", "12:00")],
+      JORNADA_PADRAO,
+      { ...OPCOES, abono: FERIAS },
+    );
+    assert.equal(j.previsto, 0);
+    assert.equal(j.extras, 240);
+  });
+
+  it("dia abonado nunca vira pendência", () => {
+    const j = calcularJornada("2026-08-12", [], JORNADA_PADRAO, {
+      ...OPCOES,
+      abono: FERIAS,
+      hoje: "2026-08-20",
+    });
+    assert.equal(j.pendencia, null);
+  });
+
+  it("detecta sobreposição de períodos", () => {
+    assert.equal(conflita({ inicio: "2026-08-10", fim: "2026-08-14" }, { inicio: "2026-08-14", fim: "2026-08-20" }), true);
+    assert.equal(conflita({ inicio: "2026-08-10", fim: "2026-08-14" }, { inicio: "2026-08-15", fim: "2026-08-20" }), false);
+    assert.equal(diasCorridos("2026-08-10", "2026-08-14"), 5);
+  });
+});
+
+describe("jornada — pontos pendentes", () => {
+  const HOJE = "2026-08-20";
+
+  it("dia de trabalho sem nenhuma batida vira pendência", () => {
+    const j = calcularJornada("2026-08-17", [], JORNADA_PADRAO, { ...OPCOES, hoje: HOJE });
+    assert.equal(j.pendencia, "SEM_REGISTRO");
+  });
+
+  it("dia com entrada e sem saída vira pendência de sequência", () => {
+    const j = calcularJornada("2026-08-17", [batida("ENTRADA", "2026-08-17", "08:00")], JORNADA_PADRAO, {
+      ...OPCOES,
+      hoje: HOJE,
+    });
+    assert.equal(j.pendencia, "INCOMPLETO");
+  });
+
+  it("o dia de hoje nunca é pendência", () => {
+    // Quem está trabalhando agora ainda não tem saída — cobrar seria alarme falso.
+    const j = calcularJornada(HOJE, [batida("ENTRADA", HOJE, "08:00")], JORNADA_PADRAO, {
+      ...OPCOES,
+      hoje: HOJE,
+    });
+    assert.equal(j.pendencia, null);
+  });
+
+  it("folga e sábado não geram pendência", () => {
+    const sabado = calcularJornada("2026-08-15", [], JORNADA_PADRAO, { ...OPCOES, hoje: HOJE });
+    assert.equal(sabado.pendencia, null);
+  });
+
+  it("dia completo não gera pendência", () => {
+    const j = calcularJornada(
+      "2026-08-17",
+      [batida("ENTRADA", "2026-08-17", "08:00"), batida("SAIDA", "2026-08-17", "17:00")],
+      JORNADA_PADRAO,
+      { ...OPCOES, hoje: HOJE },
+    );
+    assert.equal(j.pendencia, null);
+  });
+
+  it("sem saber que dia é hoje, não acusa pendência nenhuma", () => {
+    const j = calcularJornada("2026-08-17", [], JORNADA_PADRAO, OPCOES);
+    assert.equal(j.pendencia, null);
+  });
+
+  it("totaliza faltas, pendências e abonos do período", () => {
+    const dias = [
+      calcularJornada("2026-08-17", [], JORNADA_PADRAO, { ...OPCOES, hoje: HOJE }),
+      calcularJornada("2026-08-18", [batida("ENTRADA", "2026-08-18", "08:00")], JORNADA_PADRAO, {
+        ...OPCOES,
+        hoje: HOJE,
+      }),
+      calcularJornada("2026-08-19", [], JORNADA_PADRAO, {
+        ...OPCOES,
+        hoje: HOJE,
+        abono: { tipo: "FOLGA", inicio: "2026-08-19", fim: "2026-08-19", status: "VALIDADA" },
+      }),
+    ];
+    const t = totalizar(dias);
+    assert.equal(t.faltas, 1);
+    assert.equal(t.pendentes, 2);
+    assert.equal(t.abonados, 1);
+  });
+});
+
+describe("jornada — admissão", () => {
+  it("dia anterior à admissão não cobra jornada", () => {
+    // Pedir o mês inteiro de quem entrou no dia 15 mostrava 14 faltas.
+    const usuario = { ...JORNADA_PADRAO, admissaoEm: "2026-08-17" };
+    const antes = calcularJornada("2026-08-13", [], usuario, { ...OPCOES, hoje: "2026-08-20" });
+    assert.equal(antes.previsto, 0);
+    assert.equal(antes.devendo, 0);
+    assert.equal(antes.antesDaAdmissao, true);
+    assert.equal(antes.pendencia, null);
+
+    const depois = calcularJornada("2026-08-18", [], usuario, { ...OPCOES, hoje: "2026-08-20" });
+    assert.equal(depois.previsto, 480);
+    assert.equal(depois.pendencia, "SEM_REGISTRO");
+  });
+
+  it("sem data de admissão, o período pedido é cobrado inteiro", () => {
+    const j = calcularJornada("2026-08-13", [], JORNADA_PADRAO, OPCOES);
+    assert.equal(j.previsto, 480);
+    assert.equal(j.antesDaAdmissao, false);
+  });
+});
+
+describe("rotas — portões não redirecionam chamadas de API", () => {
+  const SENHA_PROVISORIA = { papel: "FUNCIONARIO", trocarSenha: true, termoAceito: false };
+  const SEM_TERMO = { papel: "FUNCIONARIO", trocarSenha: false, termoAceito: false };
+
+  it("API barrada devolve bloqueio, não desvio para HTML", () => {
+    // Um 307 para /termos faria o fetch receber HTML e estourar no JSON.parse,
+    // aparecendo para o usuário como "falha de conexão".
+    const comSenha = decidirRota("/api/solicitacoes", SENHA_PROVISORIA);
+    assert.equal(comSenha.tipo, "bloqueado");
+    if (comSenha.tipo === "bloqueado") assert.equal(comSenha.motivo, "TROCAR_SENHA");
+
+    const semTermo = decidirRota("/api/solicitacoes", SEM_TERMO);
+    assert.equal(semTermo.tipo, "bloqueado");
+    if (semTermo.tipo === "bloqueado") assert.equal(semTermo.motivo, "ACEITAR_TERMO");
+  });
+
+  it("a página equivalente continua redirecionando", () => {
+    assert.deepEqual(decidirRota("/ponto", SENHA_PROVISORIA), {
+      tipo: "redireciona",
+      destino: "/trocar-senha",
+    });
+    assert.deepEqual(decidirRota("/ponto", SEM_TERMO), {
+      tipo: "redireciona",
+      destino: "/termos",
+    });
+  });
+
+  it("as rotas de saída continuam livres", () => {
+    for (const s of [SENHA_PROVISORIA, SEM_TERMO]) {
+      assert.equal(decidirRota("/api/auth/logout", s).tipo, "segue");
+    }
+    assert.equal(decidirRota("/api/auth/trocar-senha", SENHA_PROVISORIA).tipo, "segue");
+    assert.equal(decidirRota("/api/termos/aceitar", SEM_TERMO).tipo, "segue");
+  });
+
+  it("toda mensagem de bloqueio tem texto", () => {
+    for (const m of ["TROCAR_SENHA", "ACEITAR_TERMO"] as const) {
+      assert.ok(MENSAGEM_BLOQUEIO[m].length > 10);
     }
   });
 });

@@ -5,9 +5,10 @@ import { totemDaApi } from "@/lib/auth";
 import { obterConfig } from "@/lib/config";
 import { confiancaPercentual, descriptorValido } from "@/lib/face";
 import { dentroDaCerca as avaliarCerca, distanciaMetros } from "@/lib/geo";
-import { diaDe, horaDe, limitesDoDia } from "@/lib/datas";
+import { diaBr, diaDe, horaDe, limitesDoDia } from "@/lib/datas";
 import { ROTULO_TIPO, validarSequencia } from "@/lib/jornada";
 import { identificarNoTotem, MENSAGEM_TOTEM } from "@/lib/totem";
+import { pendenciasDoFuncionario } from "@/lib/pendencias";
 import { agenteDaRequisicao, ipDaRequisicao } from "@/lib/requisicao";
 import { limitar } from "@/lib/limite";
 
@@ -139,6 +140,12 @@ export async function POST(req: Request) {
     },
   });
 
+  // ---- 6. O que esta pessoa precisa saber antes de sair da frente do totem ----
+  // Quem bate ponto só pelo totem não tem login para ver avisos em outro lugar,
+  // então é aqui ou em lugar nenhum. A tela é compartilhada, então o alerta de
+  // dias em aberto diz só a quantidade; o detalhe fica com o responsável.
+  const pendencias = await pendenciasDoFuncionario(funcionario.id);
+
   return NextResponse.json({
     ok: true,
     funcionario: {
@@ -152,6 +159,18 @@ export async function POST(req: Request) {
       hora: horaDe(registro.momento, config.fusoHorario),
     },
     confianca: confiancaPercentual(distancia),
+    diasEmAberto: pendencias.dias.filter((d) => !d.jaSolicitado).length,
+    // A proposta do administrador precisa do de-acordo da pessoa, e ela está
+    // autenticada pelo rosto agora — é o único momento em que dá para pedir.
+    propostas: pendencias.propostas.map((p) => ({
+      id: p.id,
+      dia: diaBr(p.dia),
+      acao: p.acao,
+      rotuloTipo: ROTULO_TIPO[p.tipo as keyof typeof ROTULO_TIPO],
+      horario: p.horario,
+      motivo: p.motivo,
+      propostaPor: p.propostaPor,
+    })),
     aviso:
       dentroDaCerca === false
         ? `Registrado a ${distanciaDaEmpresa} m do local cadastrado da empresa.`

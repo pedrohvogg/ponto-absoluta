@@ -15,13 +15,31 @@ type Pessoa = {
 
 type Batida = { tipo: TipoRegistro; rotulo: string; hora: string };
 
+/** Ajuste lançado pelo administrador que espera o de-acordo desta pessoa. */
+type PropostaTotem = {
+  id: string;
+  dia: string;
+  acao: "INCLUIR" | "ALTERAR" | "EXCLUIR";
+  rotuloTipo: string;
+  horario: string | null;
+  motivo: string;
+  propostaPor: string | null;
+};
+
 type Estado =
   | { tela: "ocioso" }
   | { tela: "processando" }
   | { tela: "termo"; pessoa: Pessoa }
   | { tela: "confirmar"; pessoa: Pessoa; tipoSugerido: TipoRegistro; batidas: Batida[] }
   | { tela: "matricula"; mensagem: string }
-  | { tela: "sucesso"; texto: string; detalhe: string; aviso: string | null }
+  | {
+      tela: "sucesso";
+      texto: string;
+      detalhe: string;
+      aviso: string | null;
+      diasEmAberto: number;
+      propostas: PropostaTotem[];
+    }
   | { tela: "erro"; mensagem: string };
 
 const TIPOS: { tipo: TipoRegistro; emoji: string }[] = [
@@ -99,7 +117,11 @@ export default function PainelTotem({
   useEffect(() => {
     const segundos =
       estado.tela === "sucesso"
-        ? SEGUNDOS_SUCESSO
+        ? // Havendo ajuste a confirmar, a pessoa precisa de tempo para ler e
+          // decidir — seis segundos seriam um "sim" por acidente.
+          estado.propostas.length > 0
+          ? SEGUNDOS_INATIVIDADE
+          : SEGUNDOS_SUCESSO
         : estado.tela === "erro"
           ? SEGUNDOS_ERRO
           : estado.tela === "confirmar" || estado.tela === "termo" || estado.tela === "matricula"
@@ -185,6 +207,8 @@ export default function PainelTotem({
         texto: `${dados.registro.rotulo} registrada`,
         detalhe: `${dados.funcionario.primeiroNome} · ${dados.registro.hora}`,
         aviso: dados.aviso,
+        diasEmAberto: dados.diasEmAberto ?? 0,
+        propostas: dados.propostas ?? [],
       });
     } catch {
       setEstado({ tela: "erro", mensagem: "Sem conexão com o servidor. Chame o responsável." });
@@ -437,6 +461,35 @@ export default function PainelTotem({
               <p className="mt-4 text-3xl font-bold text-emerald-400">{estado.texto}</p>
               <p className="mt-1 text-xl text-slate-200">{estado.detalhe}</p>
               {estado.aviso && <p className="mt-3 text-sm text-amber-300">{estado.aviso}</p>}
+
+              {estado.diasEmAberto > 0 && (
+                <p className="mx-auto mt-4 max-w-md rounded-xl bg-amber-500/15 px-4 py-3 text-sm text-amber-200">
+                  Você tem{" "}
+                  <strong>
+                    {estado.diasEmAberto === 1
+                      ? "1 dia sem ponto completo"
+                      : `${estado.diasEmAberto} dias sem ponto completo`}
+                  </strong>
+                  . Procure o responsável para regularizar.
+                </p>
+              )}
+
+              {estado.propostas.map((p) => (
+                <ConfirmacaoDeAjuste
+                  key={p.id}
+                  proposta={p}
+                  aoResponder={(id) =>
+                    setEstado((atual) =>
+                      atual.tela === "sucesso"
+                        ? { ...atual, propostas: atual.propostas.filter((x) => x.id !== id) }
+                        : atual,
+                    )
+                  }
+                  capturaRef={capturaRef}
+                  matriculaRef={matriculaRef}
+                />
+              ))}
+
               <button
                 type="button"
                 onClick={voltarAoInicio}
@@ -479,5 +532,97 @@ export default function PainelTotem({
         </footer>
       </div>
     </main>
+  );
+}
+
+/**
+ * Cartão de de-acordo no totem.
+ *
+ * Reenvia o rosto junto da resposta: a sessão aberta no tablet é a do totem, e
+ * quem passasse depois na frente da tela poderia confirmar um desconto de horas
+ * que não é dele. O servidor reidentifica e só aceita do dono do ajuste.
+ */
+function ConfirmacaoDeAjuste({
+  proposta,
+  aoResponder,
+  capturaRef,
+  matriculaRef,
+}: {
+  proposta: PropostaTotem;
+  aoResponder: (id: string) => void;
+  capturaRef: React.MutableRefObject<ResultadoCaptura | null>;
+  matriculaRef: React.MutableRefObject<string | null>;
+}) {
+  const [ocupado, setOcupado] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const descricao =
+    proposta.acao === "EXCLUIR"
+      ? `excluir a batida de ${proposta.rotuloTipo.toLowerCase()}`
+      : proposta.acao === "ALTERAR"
+        ? `mudar a ${proposta.rotuloTipo.toLowerCase()} para ${proposta.horario}`
+        : `incluir ${proposta.rotuloTipo.toLowerCase()} às ${proposta.horario}`;
+
+  async function responder(decisao: "CONFIRMAR" | "RECUSAR") {
+    const captura = capturaRef.current;
+    if (!captura) {
+      setErro("Aproxime o rosto da câmera de novo para responder.");
+      return;
+    }
+    setErro(null);
+    setOcupado(true);
+    try {
+      const r = await fetch("/api/totem/confirmar-ajuste", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          solicitacaoId: proposta.id,
+          decisao,
+          descriptor: captura.descriptor,
+          matricula: matriculaRef.current,
+        }),
+      });
+      const dados = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setErro(dados.erro ?? "Não foi possível registrar sua resposta.");
+        return;
+      }
+      aoResponder(proposta.id);
+    } catch {
+      setErro("Sem conexão com o servidor.");
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <div className="mx-auto mt-4 max-w-md rounded-xl bg-sky-500/15 px-4 py-4 text-left">
+      <p className="text-xs font-semibold uppercase tracking-wide text-sky-300">
+        Ajuste aguardando sua confirmação
+      </p>
+      <p className="mt-1 text-sm text-slate-100">
+        {proposta.propostaPor ?? "O responsável"} quer {descricao} em <strong>{proposta.dia}</strong>.
+      </p>
+      <p className="mt-1 text-sm italic text-slate-300">“{proposta.motivo}”</p>
+      {erro && <p className="mt-2 text-sm text-amber-300">{erro}</p>}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="botao-primario px-4 py-2 text-sm"
+          disabled={ocupado}
+          onClick={() => responder("CONFIRMAR")}
+        >
+          {ocupado ? "Registrando…" : "Confirmo"}
+        </button>
+        <button
+          type="button"
+          className="botao-secundario px-4 py-2 text-sm"
+          disabled={ocupado}
+          onClick={() => responder("RECUSAR")}
+        >
+          Não concordo
+        </button>
+      </div>
+    </div>
   );
 }

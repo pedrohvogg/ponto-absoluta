@@ -42,7 +42,22 @@ export function telaInicial(papel: string | undefined): string {
 export type Decisao =
   | { tipo: "segue" }
   | { tipo: "redireciona"; destino: string }
-  | { tipo: "naoAutorizado" };
+  | { tipo: "naoAutorizado" }
+  /**
+   * Chamada de API barrada por um portao (senha provisoria ou termo pendente).
+   *
+   * Separado de `redireciona` porque devolver 307 para uma pagina HTML quebra
+   * quem chamou: o fetch segue o desvio, recebe HTML e estoura ao tentar ler
+   * JSON — o erro aparece para o usuario como "falha de conexao", que nao diz
+   * nada sobre o que realmente falta fazer.
+   */
+  | { tipo: "bloqueado"; motivo: "TROCAR_SENHA" | "ACEITAR_TERMO" };
+
+/** Mensagem que a API devolve em cada bloqueio. */
+export const MENSAGEM_BLOQUEIO = {
+  TROCAR_SENHA: "Defina sua senha definitiva antes de continuar.",
+  ACEITAR_TERMO: "É preciso aceitar o termo de uso de imagem antes de continuar.",
+} as const;
 
 /** Cookie que conta saltos seguidos, para cortar qualquer laço. */
 export const COOKIE_SALTOS = "ponto_saltos";
@@ -94,11 +109,15 @@ export function decidirRota(pathname: string, sessao: Sessao | null): Decisao {
   }
 
   if (sessao.trocarSenha && !LIBERADAS_NA_TROCA.includes(pathname)) {
-    return { tipo: "redireciona", destino: "/trocar-senha" };
+    return ehApi
+      ? { tipo: "bloqueado", motivo: "TROCAR_SENHA" }
+      : { tipo: "redireciona", destino: "/trocar-senha" };
   }
 
   if (!sessao.trocarSenha && sessao.termoAceito === false && !LIBERADAS_NO_TERMO.includes(pathname)) {
-    return { tipo: "redireciona", destino: "/termos" };
+    return ehApi
+      ? { tipo: "bloqueado", motivo: "ACEITAR_TERMO" }
+      : { tipo: "redireciona", destino: "/termos" };
   }
 
   // Cada papel so enxerga a sua area. A conta do totem em especial fica presa no
