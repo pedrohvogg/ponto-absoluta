@@ -12,7 +12,62 @@ export const esquemaJornada = z.object({
   saidaPrevista: esquemaHora,
   intervaloMinutos: z.number().int().min(0).max(480),
   diasSemana: z.array(z.number().int().min(0).max(6)).max(7),
+  /// Data de admissão: antes dela o relatório não cobra jornada.
+  admissaoEm: esquemaDia.nullable().optional().or(z.literal("").transform(() => null)),
+  /// Horários por dia da semana. Ausente mantém só o padrão acima, que é o
+  /// comportamento de quem foi cadastrado antes desta tela existir.
+  horarios: z
+    .array(
+      z.object({
+        diaSemana: z.number().int().min(0).max(6),
+        trabalha: z.boolean(),
+        entrada: esquemaHora,
+        saida: esquemaHora,
+        intervaloMinutos: z.number().int().min(0).max(480),
+        cargaMinutos: z.number().int().min(0).max(1440),
+      }),
+    )
+    .max(7)
+    .optional()
+    // Dois horários para o mesmo dia da semana deixariam a escala ambígua.
+    .refine(
+      (lista) => !lista || new Set(lista.map((h) => h.diaSemana)).size === lista.length,
+      "Há mais de um horário para o mesmo dia da semana.",
+    ),
 });
+
+export const esquemaAusencia = z
+  .object({
+    usuarioId: z.string().min(1, "Selecione o funcionário."),
+    tipo: z.enum(["FERIAS", "FOLGA", "ATESTADO", "LICENCA", "OUTRO"]).default("FERIAS"),
+    inicio: esquemaDia,
+    fim: esquemaDia,
+    observacao: z.string().trim().max(500).optional().nullable(),
+  })
+  .refine((d) => d.inicio <= d.fim, {
+    message: "A data final não pode ser anterior à inicial.",
+    path: ["fim"],
+  });
+
+/** Ajuste proposto pelo administrador, que o funcionário ainda vai confirmar. */
+export const esquemaPropostaAjuste = z
+  .object({
+    usuarioId: z.string().min(1, "Selecione o funcionário."),
+    acao: z.enum(["INCLUIR", "ALTERAR", "EXCLUIR"]),
+    dia: esquemaDia,
+    tipo: z.enum(["ENTRADA", "INICIO_INTERVALO", "FIM_INTERVALO", "SAIDA"]),
+    horario: esquemaHora.nullable().optional(),
+    registroAlvoId: z.string().nullable().optional(),
+    motivo: z.string().trim().min(10, "Explique o motivo com pelo menos 10 caracteres.").max(500),
+  })
+  .refine((d) => d.acao === "EXCLUIR" || !!d.horario, {
+    message: "Informe o horário do ajuste.",
+    path: ["horario"],
+  })
+  .refine((d) => d.acao === "INCLUIR" || !!d.registroAlvoId, {
+    message: "Selecione o registro que será corrigido.",
+    path: ["registroAlvoId"],
+  });
 
 export const esquemaFuncionario = esquemaJornada.extend({
   nome: z.string().trim().min(3, "Informe o nome completo.").max(120),

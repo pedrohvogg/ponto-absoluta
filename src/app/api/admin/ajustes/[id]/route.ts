@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { adminDaApi } from "@/lib/auth";
 import { obterConfig } from "@/lib/config";
-import { paraUtc } from "@/lib/datas";
+import { aplicarAjuste } from "@/lib/ajustes";
 import { primeiroErro } from "@/lib/validacao";
 import { ipDaRequisicao } from "@/lib/requisicao";
 
@@ -58,32 +58,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const config = await obterConfig();
 
   await prisma.$transaction(async (tx) => {
-    if (solicitacao.acao === "INCLUIR" && solicitacao.horario) {
-      await tx.registro.create({
-        data: {
-          usuarioId: solicitacao.usuarioId,
-          tipo: solicitacao.tipo,
-          momento: paraUtc(solicitacao.dia, solicitacao.horario, config.fusoHorario),
-          dia: solicitacao.dia,
-          origem: "AJUSTE",
-          observacao: `Ajuste aprovado: ${solicitacao.motivo}`,
-          lancadoPorId: admin.id,
-        },
-      });
-    } else if (solicitacao.acao === "ALTERAR" && solicitacao.registroAlvoId && solicitacao.horario) {
-      await tx.registro.update({
-        where: { id: solicitacao.registroAlvoId },
-        data: {
-          momento: paraUtc(solicitacao.dia, solicitacao.horario, config.fusoHorario),
-          tipo: solicitacao.tipo,
-          origem: "AJUSTE",
-          observacao: `Ajuste aprovado: ${solicitacao.motivo}`,
-          lancadoPorId: admin.id,
-        },
-      });
-    } else if (solicitacao.acao === "EXCLUIR" && solicitacao.registroAlvoId) {
-      await tx.registro.deleteMany({ where: { id: solicitacao.registroAlvoId } });
-    }
+    await aplicarAjuste(tx, solicitacao, config.fusoHorario, admin.id);
 
     await tx.solicitacao.update({
       where: { id },

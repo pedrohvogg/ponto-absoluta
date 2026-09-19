@@ -1,5 +1,7 @@
-import type { Registro, TipoRegistro, Usuario } from "@prisma/client";
+import type { Registro, TipoRegistro } from "@prisma/client";
 import { diaSemanaNumero, horaDe, horaParaMinutos, minutosDoDia } from "./datas";
+import { escalaDoDia, type EscalaDoDia, type HorarioSimples, type PadraoJornada } from "./escala";
+import type { AusenciaSimples } from "./ausencia";
 
 export const ROTULO_TIPO: Record<TipoRegistro, string> = {
   ENTRADA: "Entrada",
@@ -14,13 +16,21 @@ const FECHA: TipoRegistro[] = ["INICIO_INTERVALO", "SAIDA"];
 
 export type RegistroSimples = Pick<Registro, "tipo" | "momento">;
 
+/** Por que um dia ficou devendo explicacao. */
+export type Pendencia = "SEM_REGISTRO" | "INCOMPLETO";
+
+export const ROTULO_PENDENCIA: Record<Pendencia, string> = {
+  SEM_REGISTRO: "sem nenhuma batida",
+  INCOMPLETO: "falta entrada ou saída",
+};
+
 export type JornadaDoDia = {
   dia: string;
   /** Minutos efetivamente trabalhados (pares entrada->saida). */
   trabalhado: number;
   /** Minutos de intervalo (saida p/ intervalo -> retorno). */
   intervalo: number;
-  /** Minutos previstos para o dia (0 em folga). */
+  /** Minutos previstos para o dia (0 em folga, abono ou antes da admissao). */
   previsto: number;
   /** trabalhado - previsto (positivo = extra, negativo = deve). */
   saldo: number;
@@ -33,15 +43,40 @@ export type JornadaDoDia = {
   emAndamento: boolean;
   /** Sequencia de batidas inconsistente (ex.: duas entradas seguidas). */
   inconsistente: boolean;
-  /** Dia util para este funcionario. */
+  /** Dia de expediente pela escala do funcionario. */
   diaUtil: boolean;
+  /** Escala aplicada ao dia (horario proprio do dia ou padrao do funcionario). */
+  escala: EscalaDoDia;
+  /** O dia realmente cobra jornada (util, sem abono e depois da admissao). */
+  cobra: boolean;
+  /** Ausencia validada que abonou o dia. */
+  abono: AusenciaSimples | null;
+  /** O dia e anterior a admissao do funcionario. */
+  antesDaAdmissao: boolean;
+  /** Dia passado que deveria ter batidas completas e nao tem. */
+  pendencia: Pendencia | null;
   registros: RegistroSimples[];
 };
 
-export type ParametrosJornada = Pick<
-  Usuario,
-  "cargaDiariaMinutos" | "entradaPrevista" | "diasSemana"
->;
+export type ParametrosJornada = PadraoJornada & {
+  /** Horarios por dia da semana. Ausente = usa so o padrao. */
+  horarios?: HorarioSimples[] | null;
+  /** Competencia YYYY-MM-DD da admissao; antes dela nao ha jornada devida. */
+  admissaoEm?: string | null;
+};
+
+export type OpcoesJornada = {
+  fuso: string;
+  toleranciaMinutos: number;
+  agora?: Date;
+  /** Ausencia validada que cobre o dia, quando houver. */
+  abono?: AusenciaSimples | null;
+  /**
+   * Hoje na competencia da empresa. So com ele da para dizer que um dia esta
+   * pendente: o dia corrente ainda vai receber batidas e nao pode ser cobrado.
+   */
+  hoje?: string;
+};
 
 /**
  * Calcula a jornada de um dia a partir das batidas.
@@ -54,7 +89,7 @@ export function calcularJornada(
   dia: string,
   registros: RegistroSimples[],
   usuario: ParametrosJornada,
-  opcoes: { fuso: string; toleranciaMinutos: number; agora?: Date },
+  opcoes: OpcoesJornada,
 ): JornadaDoDia {
   const { fuso, toleranciaMinutos } = opcoes;
   const ordenados = [...registros].sort((a, b) => a.momento.getTime() - b.momento.getTime());
@@ -85,8 +120,16 @@ export function calcularJornada(
   }
 
   const emAndamento = abertoEm !== null;
-  const diaUtil = usuario.diasSemana.includes(diaSemanaNumero(dia));
-  const previsto = diaUtil ? usuario.cargaDiariaMinutos : 0;
+  const escala = escalaDoDia(usuario, usuario.horarios, diaSemanaNumero(dia));
+  const diaUtil = escala.trabalha;
+
+  // Tres motivos tiram a jornada prevista do dia, e cada um por uma razao
+  // diferente: folga de escala, ausencia ja validada, ou dia anterior a
+  // admissao — nesse ultimo caso a pessoa sequer trabalhava aqui.
+  const abono = opcoes.abono ?? null;
+  const antesDaAdmissao = !!usuario.admissaoEm && dia < usuario.admissaoEm;
+  const cobra = diaUtil && !abono && !antesDaAdmissao;
+  const previsto = cobra ? escala.cargaMinutos : 0;
 
   // Só uma ENTRADA de verdade serve de referência: em um dia com a sequência
   // quebrada (ex.: só a saída foi batida) não existe atraso a apurar.
@@ -94,14 +137,22 @@ export function calcularJornada(
   const ultimaSaidaReg = [...ordenados].reverse().find((r) => r.tipo === "SAIDA");
 
   let atrasoMinutos = 0;
-  if (diaUtil && primeiraEntradaReg) {
-    const previstoMin = horaParaMinutos(usuario.entradaPrevista);
+  if (cobra && primeiraEntradaReg) {
+    const previstoMin = horaParaMinutos(escala.entrada);
     const realMin = minutosDoDia(primeiraEntradaReg.momento, fuso);
     const diff = realMin - previstoMin;
     if (diff > toleranciaMinutos) atrasoMinutos = diff;
   }
 
-  const saldo = ordenados.length === 0 && !diaUtil ? 0 : trabalhado - previsto;
+  // Um dia só vira pendência depois de encerrado: o de hoje ainda vai receber
+  // batidas, e cobrar a saída de quem está trabalhando agora seria falso alarme.
+  let pendencia: Pendencia | null = null;
+  if (cobra && opcoes.hoje && dia < opcoes.hoje) {
+    if (ordenados.length === 0) pendencia = "SEM_REGISTRO";
+    else if (!primeiraEntradaReg || !ultimaSaidaReg || emAndamento) pendencia = "INCOMPLETO";
+  }
+
+  const saldo = ordenados.length === 0 && previsto === 0 ? 0 : trabalhado - previsto;
 
   return {
     dia,
@@ -117,6 +168,11 @@ export function calcularJornada(
     emAndamento,
     inconsistente,
     diaUtil,
+    escala,
+    cobra,
+    abono,
+    antesDaAdmissao,
+    pendencia,
     registros: ordenados,
   };
 }
@@ -195,6 +251,12 @@ export function totalizar(jornadas: JornadaDoDia[]) {
       saldo: acc.saldo + j.saldo,
       atrasos: acc.atrasos + (j.atrasoMinutos > 0 ? 1 : 0),
       diasTrabalhados: acc.diasTrabalhados + (j.registros.length > 0 ? 1 : 0),
+      /** Dias de expediente que ficaram sem nenhuma batida. */
+      faltas: acc.faltas + (j.pendencia === "SEM_REGISTRO" ? 1 : 0),
+      /** Dias que precisam de ajuste (sem batida ou com a sequencia furada). */
+      pendentes: acc.pendentes + (j.pendencia ? 1 : 0),
+      /** Dias cobertos por ferias/folga/atestado ja validados. */
+      abonados: acc.abonados + (j.abono ? 1 : 0),
     }),
     {
       trabalhado: 0,
@@ -205,6 +267,9 @@ export function totalizar(jornadas: JornadaDoDia[]) {
       saldo: 0,
       atrasos: 0,
       diasTrabalhados: 0,
+      faltas: 0,
+      pendentes: 0,
+      abonados: 0,
     },
   );
 }

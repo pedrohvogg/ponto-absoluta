@@ -24,6 +24,7 @@ export default async function DetalheFuncionario({
     where: { id },
     include: {
       biometrias: { orderBy: { criadoEm: "desc" }, select: { id: true, fotoBase64: true, criadoEm: true } },
+      horarios: { orderBy: { diaSemana: "asc" } },
       _count: { select: { registros: true } },
     },
   });
@@ -150,11 +151,20 @@ export default async function DetalheFuncionario({
             cargo: funcionario.cargo ?? "",
             departamento: funcionario.departamento ?? "",
             papel: funcionario.papel,
+            admissaoEm: funcionario.admissaoEm,
             cargaDiariaMinutos: funcionario.cargaDiariaMinutos,
             entradaPrevista: funcionario.entradaPrevista,
             saidaPrevista: funcionario.saidaPrevista,
             intervaloMinutos: funcionario.intervaloMinutos,
             diasSemana: funcionario.diasSemana,
+            horarios: funcionario.horarios.map((h) => ({
+              diaSemana: h.diaSemana,
+              trabalha: h.trabalha,
+              entrada: h.entrada,
+              saida: h.saida,
+              intervaloMinutos: h.intervaloMinutos,
+              cargaMinutos: h.cargaMinutos,
+            })),
           }}
         />
       </section>

@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { cargaSugerida, type HorarioSimples } from "@/lib/escala";
+import { minutosParaHoras } from "@/lib/datas";
 
 export type DadosFuncionario = {
   id?: string;
@@ -11,11 +13,13 @@ export type DadosFuncionario = {
   cargo: string;
   departamento: string;
   papel: "ADMIN" | "FUNCIONARIO" | "TOTEM";
+  admissaoEm: string | null;
   cargaDiariaMinutos: number;
   entradaPrevista: string;
   saidaPrevista: string;
   intervaloMinutos: number;
   diasSemana: number[];
+  horarios: HorarioSimples[];
 };
 
 const DIAS = [
@@ -35,11 +39,13 @@ const PADRAO: DadosFuncionario = {
   cargo: "",
   departamento: "",
   papel: "FUNCIONARIO",
+  admissaoEm: null,
   cargaDiariaMinutos: 480,
   entradaPrevista: "08:00",
   saidaPrevista: "17:00",
   intervaloMinutos: 60,
   diasSemana: [1, 2, 3, 4, 5],
+  horarios: [],
 };
 
 export default function FormularioFuncionario({
@@ -54,6 +60,9 @@ export default function FormularioFuncionario({
   // Quem bate ponto só pelo totem não precisa de e-mail nem senha. Ao editar,
   // já vem marcado se a pessoa tiver e-mail cadastrado.
   const [comLogin, setComLogin] = useState(Boolean(inicial?.email));
+  // Só entra no modo por dia quem já tem horários gravados; os demais seguem
+  // no padrão de sempre, sem precisar reconferir sete linhas.
+  const [porDia, setPorDia] = useState((inicial?.horarios?.length ?? 0) > 0);
   const [erro, setErro] = useState<string | null>(null);
   const [salvo, setSalvo] = useState(false);
   const [enviando, setEnviando] = useState(false);
@@ -78,6 +87,64 @@ export default function FormularioFuncionario({
     setSalvo(false);
   }
 
+  /** Horário do dia já materializado, partindo do padrão quando não existe. */
+  function horarioDe(n: number): HorarioSimples {
+    return (
+      dados.horarios.find((h) => h.diaSemana === n) ?? {
+        diaSemana: n,
+        trabalha: dados.diasSemana.includes(n),
+        entrada: dados.entradaPrevista,
+        saida: dados.saidaPrevista,
+        intervaloMinutos: dados.intervaloMinutos,
+        cargaMinutos: dados.diasSemana.includes(n) ? dados.cargaDiariaMinutos : 0,
+      }
+    );
+  }
+
+  /** Ao ligar o modo por dia, a semana nasce igual ao padrão já cadastrado. */
+  function alternarPorDia(ligado: boolean) {
+    setPorDia(ligado);
+    setSalvo(false);
+    if (ligado && dados.horarios.length === 0) {
+      setDados((d) => ({ ...d, horarios: DIAS.map((x) => horarioDe(x.n)) }));
+    }
+  }
+
+  function definirHorario(n: number, mudanca: Partial<HorarioSimples>) {
+    setDados((d) => {
+      const base = d.horarios.length ? d.horarios : DIAS.map((x) => horarioDe(x.n));
+      return {
+        ...d,
+        horarios: base.map((h) => {
+          if (h.diaSemana !== n) return h;
+          const novo = { ...h, ...mudanca };
+          // Mexeu no relógio: a carga acompanha, a menos que o usuário a edite
+          // diretamente logo em seguida.
+          if (
+            mudanca.entrada !== undefined ||
+            mudanca.saida !== undefined ||
+            mudanca.intervaloMinutos !== undefined
+          ) {
+            novo.cargaMinutos = cargaSugerida(novo.entrada, novo.saida, novo.intervaloMinutos);
+          }
+          if (mudanca.trabalha === false) novo.cargaMinutos = 0;
+          if (mudanca.trabalha === true && novo.cargaMinutos === 0) {
+            novo.cargaMinutos = cargaSugerida(novo.entrada, novo.saida, novo.intervaloMinutos);
+          }
+          return novo;
+        }),
+      };
+    });
+    setSalvo(false);
+  }
+
+  function totalSemanal(): string {
+    const base = dados.horarios.length ? dados.horarios : DIAS.map((x) => horarioDe(x.n));
+    return minutosParaHoras(
+      base.reduce((t, h) => t + (h.trabalha ? h.cargaMinutos : 0), 0),
+    );
+  }
+
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
     setErro(null);
@@ -93,6 +160,9 @@ export default function FormularioFuncionario({
           email: precisaEmail ? dados.email : "",
           cargo: dados.cargo || null,
           departamento: dados.departamento || null,
+          admissaoEm: dados.admissaoEm || null,
+          // Lista vazia apaga os horários por dia e devolve a pessoa ao padrão.
+          horarios: porDia ? DIAS.map((d) => horarioDe(d.n)) : [],
         }),
       });
       const resultado = await resposta.json();
@@ -302,85 +372,196 @@ export default function FormularioFuncionario({
         <p className="mb-3 text-xs text-slate-500">
           Usada para calcular atrasos, horas extras e saldo do banco de horas.
         </p>
-        <div className="grid gap-4 md:grid-cols-4">
-          <div>
-            <label htmlFor="entrada" className="rotulo">
-              Entrada
-            </label>
-            <input
-              id="entrada"
-              type="time"
-              className="campo"
-              value={dados.entradaPrevista}
-              onChange={(e) => definir("entradaPrevista", e.target.value)}
-            />
-          </div>
-          <div>
-            <label htmlFor="saida" className="rotulo">
-              Saída
-            </label>
-            <input
-              id="saida"
-              type="time"
-              className="campo"
-              value={dados.saidaPrevista}
-              onChange={(e) => definir("saidaPrevista", e.target.value)}
-            />
-          </div>
-          <div>
-            <label htmlFor="intervalo" className="rotulo">
-              Intervalo (min)
-            </label>
-            <input
-              id="intervalo"
-              type="number"
-              min={0}
-              max={480}
-              className="campo"
-              value={dados.intervaloMinutos}
-              onChange={(e) => definir("intervaloMinutos", Number(e.target.value))}
-            />
-          </div>
-          <div>
-            <label htmlFor="carga" className="rotulo">
-              Carga diária (min)
-            </label>
-            <input
-              id="carga"
-              type="number"
-              min={0}
-              max={1440}
-              step={30}
-              className="campo"
-              value={dados.cargaDiariaMinutos}
-              onChange={(e) => definir("cargaDiariaMinutos", Number(e.target.value))}
-            />
-            <p className="mt-1 text-xs text-slate-500">
-              {Math.floor(dados.cargaDiariaMinutos / 60)}h
-              {String(dados.cargaDiariaMinutos % 60).padStart(2, "0")} por dia
-            </p>
-          </div>
+
+        <div className="mb-4 max-w-xs">
+          <label htmlFor="admissao" className="rotulo">
+            Data de admissão
+          </label>
+          <input
+            id="admissao"
+            type="date"
+            className="campo"
+            value={dados.admissaoEm ?? ""}
+            onChange={(e) => definir("admissaoEm", e.target.value || null)}
+          />
+          <p className="mt-1 text-xs text-slate-500">
+            Dias anteriores a esta data não entram como falta no relatório. Em branco, o período
+            pedido é cobrado inteiro.
+          </p>
         </div>
 
-        <div className="mt-4">
-          <span className="rotulo">Dias de trabalho</span>
-          <div className="flex flex-wrap gap-2">
-            {DIAS.map((d) => (
-              <button
-                key={d.n}
-                type="button"
-                onClick={() => alternarDia(d.n)}
-                className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
-                  dados.diasSemana.includes(d.n)
-                    ? "border-marca-500 bg-marca-50 text-marca-800"
-                    : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
-                }`}
-              >
-                {d.r}
-              </button>
-            ))}
+        <label className="mb-4 flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={porDia}
+            onChange={(e) => alternarPorDia(e.target.checked)}
+          />
+          <span className="text-sm">
+            <span className="font-medium text-slate-800">Horário diferente por dia da semana</span>
+            <span className="block text-xs text-slate-500">
+              Marque quando o expediente muda ao longo da semana — sábado mais curto, por exemplo.
+            </span>
+          </span>
+        </label>
+
+        {porDia ? (
+          <div className="space-y-2">
+            {DIAS.map((d) => {
+              const h = horarioDe(d.n);
+              return (
+                <div
+                  key={d.n}
+                  className={`grid items-center gap-2 rounded-lg border p-2 sm:grid-cols-[6rem_1fr_1fr_1fr_1fr] ${
+                    h.trabalha ? "border-slate-200 bg-white" : "border-slate-200 bg-slate-50"
+                  }`}
+                >
+                  <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={h.trabalha}
+                      onChange={(e) => definirHorario(d.n, { trabalha: e.target.checked })}
+                    />
+                    {d.r}
+                  </label>
+                  {h.trabalha ? (
+                    <>
+                      <Campo rotulo="Entrada">
+                        <input
+                          type="time"
+                          className="campo py-1.5 text-sm"
+                          value={h.entrada}
+                          onChange={(e) => definirHorario(d.n, { entrada: e.target.value })}
+                        />
+                      </Campo>
+                      <Campo rotulo="Saída">
+                        <input
+                          type="time"
+                          className="campo py-1.5 text-sm"
+                          value={h.saida}
+                          onChange={(e) => definirHorario(d.n, { saida: e.target.value })}
+                        />
+                      </Campo>
+                      <Campo rotulo="Intervalo (min)">
+                        <input
+                          type="number"
+                          min={0}
+                          max={480}
+                          className="campo py-1.5 text-sm"
+                          value={h.intervaloMinutos}
+                          onChange={(e) =>
+                            definirHorario(d.n, { intervaloMinutos: Number(e.target.value) })
+                          }
+                        />
+                      </Campo>
+                      <Campo rotulo="Carga (min)">
+                        <input
+                          type="number"
+                          min={0}
+                          max={1440}
+                          className="campo py-1.5 text-sm"
+                          value={h.cargaMinutos}
+                          onChange={(e) =>
+                            definirHorario(d.n, { cargaMinutos: Number(e.target.value) })
+                          }
+                        />
+                      </Campo>
+                    </>
+                  ) : (
+                    <p className="text-xs text-slate-500 sm:col-span-4">Folga</p>
+                  )}
+                </div>
+              );
+            })}
+            <p className="pt-1 text-xs text-slate-500">
+              Total previsto na semana: <strong>{totalSemanal()}</strong>. A carga é sugerida pelo
+              relógio quando você muda entrada, saída ou intervalo, mas continua editável — jornada
+              contratada nem sempre bate com o horário da porta.
+            </p>
           </div>
-        </div>
+        ) : (
+          <>
+            <div className="grid gap-4 md:grid-cols-4">
+              <div>
+                <label htmlFor="entrada" className="rotulo">
+                  Entrada
+                </label>
+                <input
+                  id="entrada"
+                  type="time"
+                  className="campo"
+                  value={dados.entradaPrevista}
+                  onChange={(e) => definir("entradaPrevista", e.target.value)}
+                />
+              </div>
+              <div>
+                <label htmlFor="saida" className="rotulo">
+                  Saída
+                </label>
+                <input
+                  id="saida"
+                  type="time"
+                  className="campo"
+                  value={dados.saidaPrevista}
+                  onChange={(e) => definir("saidaPrevista", e.target.value)}
+                />
+              </div>
+              <div>
+                <label htmlFor="intervalo" className="rotulo">
+                  Intervalo (min)
+                </label>
+                <input
+                  id="intervalo"
+                  type="number"
+                  min={0}
+                  max={480}
+                  className="campo"
+                  value={dados.intervaloMinutos}
+                  onChange={(e) => definir("intervaloMinutos", Number(e.target.value))}
+                />
+              </div>
+              <div>
+                <label htmlFor="carga" className="rotulo">
+                  Carga diária (min)
+                </label>
+                <input
+                  id="carga"
+                  type="number"
+                  min={0}
+                  max={1440}
+                  step={30}
+                  className="campo"
+                  value={dados.cargaDiariaMinutos}
+                  onChange={(e) => definir("cargaDiariaMinutos", Number(e.target.value))}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  {Math.floor(dados.cargaDiariaMinutos / 60)}h
+                  {String(dados.cargaDiariaMinutos % 60).padStart(2, "0")} por dia
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <span className="rotulo">Dias de trabalho</span>
+              <div className="flex flex-wrap gap-2">
+                {DIAS.map((d) => (
+                  <button
+                    key={d.n}
+                    type="button"
+                    onClick={() => alternarDia(d.n)}
+                    className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
+                      dados.diasSemana.includes(d.n)
+                        ? "border-marca-500 bg-marca-50 text-marca-800"
+                        : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+                    }`}
+                  >
+                    {d.r}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
       </section>
 
       {erro && (
@@ -403,5 +584,17 @@ export default function FormularioFuncionario({
         </button>
       </div>
     </form>
+  );
+}
+
+/** Rótulo curto acima de um campo da grade de horários. */
+function Campo({ rotulo, children }: { rotulo: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-0.5 block text-[11px] uppercase tracking-wide text-slate-400">
+        {rotulo}
+      </span>
+      {children}
+    </label>
   );
 }

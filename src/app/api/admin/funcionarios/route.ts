@@ -49,6 +49,9 @@ export async function POST(req: Request) {
         saidaPrevista: dados.saidaPrevista,
         intervaloMinutos: dados.intervaloMinutos,
         diasSemana: dados.diasSemana,
+        admissaoEm: dados.admissaoEm ?? null,
+        // Lista vazia = sem horário por dia; a pessoa segue no padrão acima.
+        horarios: dados.horarios?.length ? { create: dados.horarios } : undefined,
       },
       select: { id: true, nome: true, email: true, matricula: true, papel: true },
     });

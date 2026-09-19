@@ -34,11 +34,13 @@ export function EtiquetaOrigem({ origem }: { origem: OrigemRegistro }) {
 export function EtiquetaStatus({ status }: { status: StatusSolicitacao }) {
   const mapa: Record<StatusSolicitacao, string> = {
     PENDENTE: "bg-amber-100 text-amber-800",
+    AGUARDANDO_FUNCIONARIO: "bg-sky-100 text-sky-800",
     APROVADA: "bg-emerald-100 text-emerald-800",
     REJEITADA: "bg-red-100 text-red-700",
   };
   const rotulo: Record<StatusSolicitacao, string> = {
     PENDENTE: "Pendente",
+    AGUARDANDO_FUNCIONARIO: "Aguardando o funcionário",
     APROVADA: "Aprovada",
     REJEITADA: "Rejeitada",
   };
