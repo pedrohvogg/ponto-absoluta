@@ -27,6 +27,9 @@ type PropostaTotem = {
 };
 
 type Estado =
+  /** Câmera desligada, esperando alguém tocar o botão. Estado inicial. */
+  | { tela: "repouso" }
+  /** Câmera ligada, procurando um rosto. */
   | { tela: "ocioso" }
   | { tela: "processando" }
   | { tela: "termo"; pessoa: Pessoa }
@@ -49,11 +52,19 @@ const TIPOS: { tipo: TipoRegistro; emoji: string }[] = [
   { tipo: "SAIDA", emoji: "🔴" },
 ];
 
-/** Tempo que a tela de resultado fica visível antes de voltar a escanear. */
+/** Tempo que a tela de resultado fica visível antes de voltar ao repouso. */
 const SEGUNDOS_SUCESSO = 6;
 const SEGUNDOS_ERRO = 6;
 /** Se ninguém concluir a batida, o totem volta sozinho para a fila. */
 const SEGUNDOS_INATIVIDADE = 45;
+/**
+ * Quanto a câmera fica procurando um rosto antes de desligar sozinha.
+ *
+ * Existe para o caso de alguém tocar o botão e se afastar: sem isso, o primeiro
+ * toque do dia deixaria a câmera ligada até a loja fechar, que é justamente o
+ * que este modo evita. Reconhecendo um rosto, a tela muda e o relógio para.
+ */
+const SEGUNDOS_PROCURANDO = 60;
 
 export default function PainelTotem({
   nomeEmpresa,
@@ -68,7 +79,7 @@ export default function PainelTotem({
   registrarLocalizacao: boolean;
   termo: { secoes: SecaoTermo[]; textoAceite: string };
 }) {
-  const [estado, setEstado] = useState<Estado>({ tela: "ocioso" });
+  const [estado, setEstado] = useState<Estado>({ tela: "repouso" });
   const [ocupado, setOcupado] = useState(false);
   const [relogio, setRelogio] = useState("");
   const [digitado, setDigitado] = useState("");
@@ -110,7 +121,9 @@ export default function PainelTotem({
     matriculaRef.current = null;
     setDigitado("");
     setConcordo(false);
-    setEstado({ tela: "ocioso" });
+    // Volta para o repouso, e não para a leitura: é o desmonte da câmera que
+    // de fato apaga a luz do tablet e libera o aparelho.
+    setEstado({ tela: "repouso" });
   }, []);
 
   // ---- Volta sozinho para a tela inicial ----
@@ -124,9 +137,11 @@ export default function PainelTotem({
           : SEGUNDOS_SUCESSO
         : estado.tela === "erro"
           ? SEGUNDOS_ERRO
-          : estado.tela === "confirmar" || estado.tela === "termo" || estado.tela === "matricula"
-            ? SEGUNDOS_INATIVIDADE
-            : null;
+          : estado.tela === "ocioso"
+            ? SEGUNDOS_PROCURANDO
+            : estado.tela === "confirmar" || estado.tela === "termo" || estado.tela === "matricula"
+              ? SEGUNDOS_INATIVIDADE
+              : null;
     if (segundos === null) return;
     const id = setTimeout(voltarAoInicio, segundos * 1000);
     return () => clearTimeout(id);
@@ -262,7 +277,18 @@ export default function PainelTotem({
 
   function confirmarMatricula() {
     const captura = capturaRef.current;
-    if (!captura || digitado.length === 0) return;
+    if (digitado.length === 0) return;
+    // A matrícula sozinha nunca basta: o servidor confere o rosto contra ela.
+    // Sem uma captura, o pedido seria recusado lá — dizer isso aqui evita o
+    // botão que parece não fazer nada.
+    if (!captura) {
+      setEstado({
+        tela: "matricula",
+        mensagem:
+          "Ainda não vimos seu rosto. Toque em “Voltar” e fique de frente para a câmera até o círculo ficar verde.",
+      });
+      return;
+    }
     identificar(captura, digitado);
   }
 
@@ -277,31 +303,60 @@ export default function PainelTotem({
         </header>
 
         <div className="flex flex-1 flex-col justify-center py-4">
-          {/* A câmera fica montada o tempo todo para não reiniciar a cada batida,
-              mas só dispara a identificação quando o totem está ocioso. */}
-          <div className={escaneando ? "" : "hidden"}>
-            <h1 className="mb-1 text-center text-2xl font-bold">Bater ponto</h1>
-            <p className="mb-4 text-center text-slate-300">
-              Aproxime o rosto do círculo — o sistema reconhece você automaticamente.
-            </p>
-          </div>
-          <div className={escaneando ? "" : "sr-only"} aria-hidden={!escaneando}>
-            <CameraFacial
-              aoCapturar={identificar}
-              automatico
-              ocupado={ocupado || !escaneando}
-              semFoto={!salvarFoto}
-            />
-          </div>
+          {estado.tela === "repouso" && (
+            <div className="text-center">
+              <h1 className="text-3xl font-bold">Bater ponto</h1>
+              <p className="mt-2 text-slate-300">
+                Toque no botão e olhe para a tela. A câmera liga só neste momento.
+              </p>
+              <button
+                type="button"
+                onClick={() => setEstado({ tela: "ocioso" })}
+                className="mx-auto mt-8 flex h-44 w-44 flex-col items-center justify-center rounded-full bg-marca-600 text-white shadow-2xl transition active:scale-95 hover:bg-marca-500"
+              >
+                <span className="text-5xl">📷</span>
+                <span className="mt-2 text-lg font-bold">Registrar</span>
+              </button>
+              <p className="mt-8 text-sm text-slate-500">
+                A câmera permanece desligada até alguém tocar aqui.
+              </p>
+            </div>
+          )}
 
-          {estado.tela === "ocioso" && (
-            <button
-              type="button"
-              onClick={() => setEstado({ tela: "matricula", mensagem: "" })}
-              className="mx-auto mt-4 text-sm text-slate-400 underline"
-            >
-              Não está reconhecendo? Digitar matrícula
-            </button>
+          {/* A câmera só existe enquanto o totem está procurando um rosto: ao sair
+              desta tela o componente é desmontado, e é o desmonte que encerra o
+              fluxo de vídeo e apaga a luz do tablet. O custo é a partida de alguns
+              segundos a cada batida — preço justo para não deixar a câmera de uma
+              loja ligada o expediente inteiro. */}
+          {escaneando && (
+            <>
+              <h1 className="mb-1 text-center text-2xl font-bold">Bater ponto</h1>
+              <p className="mb-4 text-center text-slate-300">
+                Aproxime o rosto do círculo — o sistema reconhece você automaticamente.
+              </p>
+              <CameraFacial
+                aoCapturar={identificar}
+                automatico
+                ocupado={ocupado}
+                semFoto={!salvarFoto}
+              />
+              <div className="mt-4 flex flex-col items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEstado({ tela: "matricula", mensagem: "" })}
+                  className="text-sm text-slate-400 underline"
+                >
+                  Não está reconhecendo? Digitar matrícula
+                </button>
+                <button
+                  type="button"
+                  onClick={voltarAoInicio}
+                  className="text-sm text-slate-500 underline"
+                >
+                  Cancelar e desligar a câmera
+                </button>
+              </div>
+            </>
           )}
 
           {estado.tela === "processando" && (
@@ -445,13 +500,25 @@ export default function PainelTotem({
                   </button>
                 ))}
               </div>
-              <button
-                type="button"
-                onClick={voltarAoInicio}
-                className="mx-auto mt-5 block text-sm text-slate-400 underline"
-              >
-                Cancelar
-              </button>
+              <div className="mt-5 flex justify-center gap-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDigitado("");
+                    setEstado({ tela: "ocioso" });
+                  }}
+                  className="text-sm text-slate-300 underline"
+                >
+                  Voltar para a câmera
+                </button>
+                <button
+                  type="button"
+                  onClick={voltarAoInicio}
+                  className="text-sm text-slate-400 underline"
+                >
+                  Cancelar
+                </button>
+              </div>
             </div>
           )}
 
