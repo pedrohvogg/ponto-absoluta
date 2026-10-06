@@ -10,6 +10,16 @@ export const ROTULO_TIPO: Record<TipoRegistro, string> = {
   SAIDA: "Saída",
 };
 
+/**
+ * A partir de quanto tempo trabalhado faz sentido presumir o intervalo que
+ * nao foi batido.
+ *
+ * Seis horas e o ponto em que a CLT passa a exigir uma hora de descanso. Abaixo
+ * disso ninguem para para almocar, e descontar a hora transformaria um turno
+ * curto de 3h em 2h — um desconto que o funcionario nao deve.
+ */
+export const MINIMO_PARA_PRESUMIR_INTERVALO = 6 * 60;
+
 /** Tipos que "abrem" tempo de trabalho e tipos que "fecham". */
 const ABRE: TipoRegistro[] = ["ENTRADA", "FIM_INTERVALO"];
 const FECHA: TipoRegistro[] = ["INICIO_INTERVALO", "SAIDA"];
@@ -28,8 +38,13 @@ export type JornadaDoDia = {
   dia: string;
   /** Minutos efetivamente trabalhados (pares entrada->saida). */
   trabalhado: number;
-  /** Minutos de intervalo (saida p/ intervalo -> retorno). */
+  /** Minutos de intervalo (batido, ou presumido quando nao houve batida). */
   intervalo: number;
+  /**
+   * Minutos de intervalo descontados sem batida correspondente. Zero quando o
+   * funcionario registrou a saida e o retorno.
+   */
+  intervaloPresumido: number;
   /** Minutos previstos para o dia (0 em folga, abono ou antes da admissao). */
   previsto: number;
   /** trabalhado - previsto (positivo = extra, negativo = deve). */
@@ -123,6 +138,25 @@ export function calcularJornada(
   const escala = escalaDoDia(usuario, usuario.horarios, diaSemanaNumero(dia));
   const diaUtil = escala.trabalha;
 
+  // Intervalo não batido: a loja prefere que a equipe saia para o almoço sem
+  // precisar passar no tablet duas vezes. Sem bater, o par entrada→saída cobre
+  // o almoço inteiro e o dia fecharia com uma hora a mais de trabalho.
+  //
+  // Então o intervalo previsto na escala é descontado, e o dia fica marcado
+  // como presumido para a conferência saber que aquela hora não veio de uma
+  // batida. Quem bate o intervalo continua tendo o tempo real contado.
+  const presumirIntervalo =
+    intervalo === 0 &&
+    escala.intervaloMinutos > 0 &&
+    trabalhado >= MINIMO_PARA_PRESUMIR_INTERVALO &&
+    trabalhado > escala.intervaloMinutos;
+
+  const intervaloPresumido = presumirIntervalo ? escala.intervaloMinutos : 0;
+  if (presumirIntervalo) {
+    trabalhado -= intervaloPresumido;
+    intervalo = intervaloPresumido;
+  }
+
   // Tres motivos tiram a jornada prevista do dia, e cada um por uma razao
   // diferente: folga de escala, ausencia ja validada, ou dia anterior a
   // admissao — nesse ultimo caso a pessoa sequer trabalhava aqui.
@@ -167,6 +201,7 @@ export function calcularJornada(
     ultimaSaida: ultimaSaidaReg ? horaDe(ultimaSaidaReg.momento, fuso) : null,
     emAndamento,
     inconsistente,
+    intervaloPresumido,
     diaUtil,
     escala,
     cobra,

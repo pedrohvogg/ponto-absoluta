@@ -26,6 +26,29 @@ type PropostaTotem = {
   propostaPor: string | null;
 };
 
+type DiaPendenteTotem = {
+  dia: string;
+  diaBr: string;
+  diaSemana: string;
+  rotuloMotivo: string;
+  entradaPrevista: string;
+  saidaPrevista: string;
+  batidas: { hora: string; rotulo: string }[];
+  jaSolicitado: boolean;
+};
+
+type Pendencias = { dias: DiaPendenteTotem[]; propostas: PropostaTotem[] };
+
+const SEM_PENDENCIAS: Pendencias = { dias: [], propostas: [] };
+
+/** Motivos prontos: digitar texto corrido num quiosque é inviável. */
+const MOTIVOS = [
+  "Esqueci de registrar o ponto nesse dia.",
+  "Estava em atendimento e não consegui vir ao totem.",
+  "O totem estava fora do ar nesse horário.",
+  "Saí para uma tarefa externa a serviço da loja.",
+];
+
 type Estado =
   /** Câmera desligada, esperando alguém tocar o botão. Estado inicial. */
   | { tela: "repouso" }
@@ -33,15 +56,23 @@ type Estado =
   | { tela: "ocioso" }
   | { tela: "processando" }
   | { tela: "termo"; pessoa: Pessoa }
-  | { tela: "confirmar"; pessoa: Pessoa; tipoSugerido: TipoRegistro; batidas: Batida[] }
+  | {
+      tela: "confirmar";
+      pessoa: Pessoa;
+      tipoSugerido: TipoRegistro;
+      batidas: Batida[];
+      pendencias: Pendencias;
+    }
+  /** Lista de dias em aberto, de onde a pessoa pede o ajuste. */
+  | { tela: "pendencias"; pessoa: Pessoa; pendencias: Pendencias; voltarPara: "confirmar" | "repouso" }
   | { tela: "matricula"; mensagem: string }
   | {
       tela: "sucesso";
       texto: string;
       detalhe: string;
       aviso: string | null;
-      diasEmAberto: number;
-      propostas: PropostaTotem[];
+      pessoa: Pessoa;
+      pendencias: Pendencias;
     }
   | { tela: "erro"; mensagem: string };
 
@@ -132,14 +163,17 @@ export default function PainelTotem({
       estado.tela === "sucesso"
         ? // Havendo ajuste a confirmar, a pessoa precisa de tempo para ler e
           // decidir — seis segundos seriam um "sim" por acidente.
-          estado.propostas.length > 0
+          estado.pendencias.propostas.length > 0
           ? SEGUNDOS_INATIVIDADE
           : SEGUNDOS_SUCESSO
         : estado.tela === "erro"
           ? SEGUNDOS_ERRO
           : estado.tela === "ocioso"
             ? SEGUNDOS_PROCURANDO
-            : estado.tela === "confirmar" || estado.tela === "termo" || estado.tela === "matricula"
+            : estado.tela === "confirmar" ||
+                estado.tela === "termo" ||
+                estado.tela === "matricula" ||
+                estado.tela === "pendencias"
               ? SEGUNDOS_INATIVIDADE
               : null;
     if (segundos === null) return;
@@ -183,6 +217,7 @@ export default function PainelTotem({
           pessoa: dados.funcionario,
           tipoSugerido: dados.tipoSugerido,
           batidas: dados.batidasHoje,
+          pendencias: dados.pendencias ?? SEM_PENDENCIAS,
         });
       } catch {
         setEstado({ tela: "erro", mensagem: "Sem conexão com o servidor. Chame o responsável." });
@@ -222,8 +257,8 @@ export default function PainelTotem({
         texto: `${dados.registro.rotulo} registrada`,
         detalhe: `${dados.funcionario.primeiroNome} · ${dados.registro.hora}`,
         aviso: dados.aviso,
-        diasEmAberto: dados.diasEmAberto ?? 0,
-        propostas: dados.propostas ?? [],
+        pessoa: dados.funcionario,
+        pendencias: dados.pendencias ?? SEM_PENDENCIAS,
       });
     } catch {
       setEstado({ tela: "erro", mensagem: "Sem conexão com o servidor. Chame o responsável." });
@@ -407,6 +442,26 @@ export default function PainelTotem({
                 })}
               </div>
 
+              {contarEmAberto(estado.pendencias) > 0 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setEstado({
+                      tela: "pendencias",
+                      pessoa: estado.pessoa,
+                      pendencias: estado.pendencias,
+                      voltarPara: "confirmar",
+                    })
+                  }
+                  className="mx-auto mt-5 block rounded-xl bg-amber-500/15 px-4 py-3 text-sm text-amber-200 underline"
+                >
+                  {contarEmAberto(estado.pendencias) === 1
+                    ? "Você tem 1 dia sem ponto completo"
+                    : `Você tem ${contarEmAberto(estado.pendencias)} dias sem ponto completo`}{" "}
+                  — ver e pedir ajuste
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={voltarAoInicio}
@@ -415,6 +470,31 @@ export default function PainelTotem({
                 Não sou eu / cancelar
               </button>
             </div>
+          )}
+
+          {estado.tela === "pendencias" && (
+            <TelaPendencias
+              pessoa={estado.pessoa}
+              pendencias={estado.pendencias}
+              capturaRef={capturaRef}
+              matriculaRef={matriculaRef}
+              aoPedir={(dia) =>
+                setEstado((atual) =>
+                  atual.tela === "pendencias"
+                    ? {
+                        ...atual,
+                        pendencias: {
+                          ...atual.pendencias,
+                          dias: atual.pendencias.dias.map((d) =>
+                            d.dia === dia ? { ...d, jaSolicitado: true } : d,
+                          ),
+                        },
+                      }
+                    : atual,
+                )
+              }
+              aoVoltar={voltarAoInicio}
+            />
           )}
 
           {estado.tela === "termo" && (
@@ -529,26 +609,43 @@ export default function PainelTotem({
               <p className="mt-1 text-xl text-slate-200">{estado.detalhe}</p>
               {estado.aviso && <p className="mt-3 text-sm text-amber-300">{estado.aviso}</p>}
 
-              {estado.diasEmAberto > 0 && (
-                <p className="mx-auto mt-4 max-w-md rounded-xl bg-amber-500/15 px-4 py-3 text-sm text-amber-200">
+              {estado.pendencias.dias.filter((d) => !d.jaSolicitado).length > 0 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setEstado({
+                      tela: "pendencias",
+                      pessoa: estado.pessoa,
+                      pendencias: estado.pendencias,
+                      voltarPara: "repouso",
+                    })
+                  }
+                  className="mx-auto mt-4 block max-w-md rounded-xl bg-amber-500/15 px-4 py-3 text-sm text-amber-200 underline"
+                >
                   Você tem{" "}
                   <strong>
-                    {estado.diasEmAberto === 1
+                    {contarEmAberto(estado.pendencias) === 1
                       ? "1 dia sem ponto completo"
-                      : `${estado.diasEmAberto} dias sem ponto completo`}
+                      : `${contarEmAberto(estado.pendencias)} dias sem ponto completo`}
                   </strong>
-                  . Procure o responsável para regularizar.
-                </p>
+                  . Toque para resolver agora.
+                </button>
               )}
 
-              {estado.propostas.map((p) => (
+              {estado.pendencias.propostas.map((p) => (
                 <ConfirmacaoDeAjuste
                   key={p.id}
                   proposta={p}
                   aoResponder={(id) =>
                     setEstado((atual) =>
                       atual.tela === "sucesso"
-                        ? { ...atual, propostas: atual.propostas.filter((x) => x.id !== id) }
+                        ? {
+                            ...atual,
+                            pendencias: {
+                              ...atual.pendencias,
+                              propostas: atual.pendencias.propostas.filter((x) => x.id !== id),
+                            },
+                          }
                         : atual,
                     )
                   }
@@ -690,6 +787,214 @@ function ConfirmacaoDeAjuste({
           Não concordo
         </button>
       </div>
+    </div>
+  );
+}
+
+/** Dias em aberto que ainda não viraram pedido. */
+function contarEmAberto(p: Pendencias): number {
+  return p.dias.filter((d) => !d.jaSolicitado).length;
+}
+
+/**
+ * Lista de dias pendentes no totem, com o pedido de ajuste embutido.
+ *
+ * Pensada para dedo em tela de tablet e para quem não tem login: nada de
+ * texto corrido — o motivo vem de botões prontos e o horário sai do seletor
+ * nativo, que no tablet abre um relógio grande.
+ */
+function TelaPendencias({
+  pessoa,
+  pendencias,
+  capturaRef,
+  matriculaRef,
+  aoPedir,
+  aoVoltar,
+}: {
+  pessoa: Pessoa;
+  pendencias: Pendencias;
+  capturaRef: React.MutableRefObject<ResultadoCaptura | null>;
+  matriculaRef: React.MutableRefObject<string | null>;
+  aoPedir: (dia: string) => void;
+  aoVoltar: () => void;
+}) {
+  const [abertoEm, setAbertoEm] = useState<string | null>(null);
+
+  return (
+    <div>
+      <p className="text-center text-2xl font-bold">{pessoa.primeiroNome}, faltam batidas</p>
+      <p className="mx-auto mt-2 max-w-lg text-center text-sm text-slate-300">
+        Nestes dias o ponto ficou incompleto. Peça o ajuste e o responsável analisa — as horas
+        não entram sozinhas.
+      </p>
+
+      <ul className="mx-auto mt-5 max-w-lg space-y-2">
+        {pendencias.dias.map((d) => (
+          <li key={d.dia} className="rounded-xl bg-slate-800 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="font-semibold">
+                  {d.diaBr} <span className="font-normal text-slate-400">({d.diaSemana})</span>
+                </p>
+                <p className="text-xs text-slate-400">
+                  {d.batidas.length === 0
+                    ? `Nenhuma batida · previsto ${d.entradaPrevista}–${d.saidaPrevista}`
+                    : `Registrado ${d.batidas.map((b) => b.hora).join(", ")} · ${d.rotuloMotivo}`}
+                </p>
+              </div>
+              {d.jaSolicitado ? (
+                <span className="rounded-lg bg-slate-700 px-3 py-1 text-xs text-slate-300">
+                  Em análise
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setAbertoEm(abertoEm === d.dia ? null : d.dia)}
+                  className="rounded-lg bg-marca-600 px-4 py-2 text-sm font-semibold"
+                >
+                  {abertoEm === d.dia ? "Fechar" : "Pedir ajuste"}
+                </button>
+              )}
+            </div>
+            {abertoEm === d.dia && !d.jaSolicitado && (
+              <PedidoNoTotem
+                dia={d}
+                capturaRef={capturaRef}
+                matriculaRef={matriculaRef}
+                aoEnviar={() => {
+                  setAbertoEm(null);
+                  aoPedir(d.dia);
+                }}
+              />
+            )}
+          </li>
+        ))}
+      </ul>
+
+      <button
+        type="button"
+        onClick={aoVoltar}
+        className="mx-auto mt-6 block text-sm text-slate-400 underline"
+      >
+        Concluir
+      </button>
+    </div>
+  );
+}
+
+function PedidoNoTotem({
+  dia,
+  capturaRef,
+  matriculaRef,
+  aoEnviar,
+}: {
+  dia: DiaPendenteTotem;
+  capturaRef: React.MutableRefObject<ResultadoCaptura | null>;
+  matriculaRef: React.MutableRefObject<string | null>;
+  aoEnviar: () => void;
+}) {
+  // Sem batida nenhuma, o esquecido quase sempre é a entrada; com batida
+  // solta, costuma ser a saída que faltou.
+  const semBatida = dia.batidas.length === 0;
+  const [tipo, setTipo] = useState<TipoRegistro>(semBatida ? "ENTRADA" : "SAIDA");
+  const [horario, setHorario] = useState(semBatida ? dia.entradaPrevista : dia.saidaPrevista);
+  const [motivo, setMotivo] = useState(MOTIVOS[0]);
+  const [erro, setErro] = useState<string | null>(null);
+  const [enviando, setEnviando] = useState(false);
+
+  async function enviar() {
+    const captura = capturaRef.current;
+    if (!captura) {
+      setErro("Aproxime o rosto da câmera de novo para enviar o pedido.");
+      return;
+    }
+    setErro(null);
+    setEnviando(true);
+    try {
+      const r = await fetch("/api/totem/solicitar-ajuste", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dia: dia.dia,
+          tipo,
+          horario,
+          motivo,
+          descriptor: captura.descriptor,
+          matricula: matriculaRef.current,
+        }),
+      });
+      const dados = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setErro(dados.erro ?? "Não foi possível enviar o pedido.");
+        return;
+      }
+      aoEnviar();
+    } catch {
+      setErro("Sem conexão com o servidor.");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 space-y-3 border-t border-slate-700 pt-4">
+      <div>
+        <p className="mb-1 text-xs uppercase tracking-wide text-slate-400">Qual batida faltou</p>
+        <div className="grid grid-cols-2 gap-2">
+          {TIPOS.map(({ tipo: t, emoji }) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTipo(t)}
+              className={`rounded-lg px-3 py-3 text-sm font-medium ${
+                tipo === t ? "bg-marca-600 text-white" : "bg-slate-700 text-slate-200"
+              }`}
+            >
+              <span className="mr-1">{emoji}</span>
+              {ROTULO_TIPO[t]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <p className="mb-1 text-xs uppercase tracking-wide text-slate-400">Que horas</p>
+        <input
+          type="time"
+          value={horario}
+          onChange={(e) => setHorario(e.target.value)}
+          className="w-full rounded-lg bg-slate-700 px-4 py-3 text-center text-2xl font-bold tabular-nums text-white"
+        />
+      </div>
+
+      <div>
+        <p className="mb-1 text-xs uppercase tracking-wide text-slate-400">Por quê</p>
+        <div className="space-y-2">
+          {MOTIVOS.map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMotivo(m)}
+              className={`block w-full rounded-lg px-3 py-2 text-left text-sm ${
+                motivo === m ? "bg-marca-600 text-white" : "bg-slate-700 text-slate-200"
+              }`}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {erro && <p className="text-sm text-amber-300">{erro}</p>}
+
+      <button
+        type="button"
+        onClick={enviar}
+        disabled={enviando}
+        className="botao-primario w-full py-3 text-base"
+      >
+        {enviando ? "Enviando…" : "Enviar pedido ao responsável"}
+      </button>
     </div>
   );
 }
