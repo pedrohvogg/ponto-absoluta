@@ -31,8 +31,12 @@ export default async function PaginaRelatorios({
     select: { id: true, nome: true, ativo: true },
   });
 
-  const espelho = funcionarioId ? await espelhoDePonto(funcionarioId, de, ate) : null;
-  const totais = espelho ? totalizar(espelho.jornadas) : null;
+  // Sem funcionário escolhido, o relatório sai com a equipe inteira — era o
+  // que o CSV já fazia, e a tela pedia uma seleção que o arquivo não exigia.
+  const alvos = funcionarioId ? [funcionarioId] : funcionarios.map((f) => f.id);
+  const espelhos = (await Promise.all(alvos.map((id) => espelhoDePonto(id, de, ate)))).filter(
+    (e): e is NonNullable<typeof e> => e !== null,
+  );
 
   const parametros = new URLSearchParams({ de, ate, ...(funcionarioId ? { funcionarioId } : {}) });
 
@@ -41,7 +45,8 @@ export default async function PaginaRelatorios({
       <div className="nao-imprimir">
         <h1 className="text-xl font-bold text-slate-900">Espelho de ponto</h1>
         <p className="text-sm text-slate-500">
-          Relatório por funcionário e período, pronto para conferência, impressão ou exportação.
+          Relatório por período, pronto para conferência, impressão ou exportação. Sem escolher
+          um funcionário, sai o espelho de todos.
         </p>
       </div>
 
@@ -56,7 +61,7 @@ export default async function PaginaRelatorios({
             defaultValue={funcionarioId ?? ""}
             className="campo py-1.5"
           >
-            <option value="">Selecione…</option>
+            <option value="">Todos os funcionários</option>
             {funcionarios.map((f) => (
               <option key={f.id} value={f.id}>
                 {f.nome} {f.ativo ? "" : "(inativo)"}
@@ -80,21 +85,56 @@ export default async function PaginaRelatorios({
         <Link href={`/api/relatorios/csv?${parametros}`} className="botao-secundario py-2">
           ⬇ CSV
         </Link>
-        {espelho && <BotaoImprimir />}
+        {espelhos.length > 0 && <BotaoImprimir />}
       </form>
 
-      {!espelho ? (
+      {espelhos.length === 0 ? (
         <div className="cartao p-8 text-center text-slate-500">
-          Selecione um funcionário para gerar o espelho de ponto.
-          <p className="mt-2 text-xs">
-            Dica: o CSV também funciona sem selecionar ninguém — nesse caso exporta todos os
-            funcionários do período.
-          </p>
+          Nenhum funcionário cadastrado para gerar o espelho.
         </div>
       ) : (
-        <div className="cartao p-5">
+        <div className="space-y-5">
+          {espelhos.length > 1 && (
+            <p className="nao-imprimir text-sm text-slate-500">
+              {espelhos.length} funcionários no período. Cada um sai numa folha ao imprimir.
+            </p>
+          )}
+          {espelhos.map((espelho) => (
+            <Espelho
+              key={espelho.usuario.id}
+              espelho={espelho}
+              ate={ate}
+              nomeEmpresa={config.nomeEmpresa}
+              fuso={config.fusoHorario}
+              varios={espelhos.length > 1}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Um espelho de ponto completo: cabeçalho, dias, totais e assinaturas. */
+function Espelho({
+  espelho,
+  ate,
+  nomeEmpresa,
+  fuso,
+  varios,
+}: {
+  espelho: NonNullable<Awaited<ReturnType<typeof espelhoDePonto>>>;
+  ate: string;
+  nomeEmpresa: string;
+  fuso: string;
+  /** Com mais de um no relatório, cada folha quebra na impressão. */
+  varios: boolean;
+}) {
+  const totais = totalizar(espelho.jornadas);
+  return (
+        <div className={`cartao p-5 ${varios ? "print:break-before-page" : ""}`}>
           <header className="mb-4 border-b border-slate-200 pb-3">
-            <h2 className="text-lg font-bold text-slate-900">{config.nomeEmpresa}</h2>
+            <h2 className="text-lg font-bold text-slate-900">{nomeEmpresa}</h2>
             <p className="text-sm text-slate-600">
               Espelho de ponto · {espelho.usuario.nome} · matrícula {espelho.usuario.matricula}
             </p>
@@ -132,7 +172,7 @@ export default async function PaginaRelatorios({
                         : j.detalhes
                             .map(
                               (r) =>
-                                `${horaDe(r.momento, config.fusoHorario)}${
+                                `${horaDe(r.momento, fuso)}${
                                   // Só lançamento humano leva asterisco; totem é automático.
                                   r.origem === "MANUAL" || r.origem === "AJUSTE" ? "*" : ""
                                 }`,
@@ -156,6 +196,9 @@ export default async function PaginaRelatorios({
                       {[
                         j.atrasoMinutos > 0 ? `atraso ${minutosParaHoras(j.atrasoMinutos)}` : null,
                         j.inconsistente ? "sequência incompleta" : null,
+                        j.intervaloPresumido > 0
+                          ? `intervalo ${minutosParaHoras(j.intervaloPresumido)} presumido`
+                          : null,
                         j.emAndamento ? "em aberto" : null,
                         j.detalhes.find((r) => r.observacao)?.observacao ?? null,
                       ]
@@ -169,24 +212,24 @@ export default async function PaginaRelatorios({
                 <tr>
                   <td className="py-2 pr-2">Totais</td>
                   <td className="py-2 pr-2 text-xs font-normal text-slate-500">
-                    {totais!.diasTrabalhados} dia(s) com registro
+                    {totais.diasTrabalhados} dia(s) com registro
                   </td>
                   <td className="py-2 pr-2 text-right font-mono tabular-nums">
-                    {minutosParaHoras(totais!.trabalhado)}
+                    {minutosParaHoras(totais.trabalhado)}
                   </td>
                   <td className="py-2 pr-2 text-right font-mono tabular-nums">
-                    {minutosParaHoras(totais!.previsto)}
+                    {minutosParaHoras(totais.previsto)}
                   </td>
                   <td
                     className={`py-2 pr-2 text-right font-mono tabular-nums ${
-                      totais!.saldo < 0 ? "text-red-600" : "text-emerald-600"
+                      totais.saldo < 0 ? "text-red-600" : "text-emerald-600"
                     }`}
                   >
-                    {minutosParaHoras(totais!.saldo)}
+                    {minutosParaHoras(totais.saldo)}
                   </td>
                   <td className="py-2 text-xs font-normal text-slate-500">
-                    extras {minutosParaHoras(totais!.extras)} · débito{" "}
-                    {minutosParaHoras(totais!.devendo)}
+                    extras {minutosParaHoras(totais.extras)} · débito{" "}
+                    {minutosParaHoras(totais.devendo)}
                   </td>
                 </tr>
               </tfoot>
@@ -195,7 +238,7 @@ export default async function PaginaRelatorios({
 
           <p className="mt-4 text-[11px] text-slate-500">
             * batida lançada manualmente ou por ajuste aprovado. Emitido em{" "}
-            {new Date().toLocaleString("pt-BR", { timeZone: config.fusoHorario })}.
+            {new Date().toLocaleString("pt-BR", { timeZone: fuso })}.
           </p>
 
           <div className="mt-10 hidden grid-cols-2 gap-8 print:grid">
@@ -207,7 +250,5 @@ export default async function PaginaRelatorios({
             </div>
           </div>
         </div>
-      )}
-    </div>
   );
 }

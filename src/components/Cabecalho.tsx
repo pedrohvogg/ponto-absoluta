@@ -9,7 +9,7 @@ const MENU_ADMIN: ItemMenu[] = [
   { href: "/admin/funcionarios", rotulo: "Funcionários" },
   { href: "/admin/registros", rotulo: "Registros" },
   { href: "/admin/saldos", rotulo: "Horas" },
-  { href: "/admin/ausencias", rotulo: "Férias" },
+  { href: "/admin/ausencias", rotulo: "Férias/Afastamento" },
   { href: "/admin/ajustes", rotulo: "Ajustes" },
   { href: "/admin/relatorios", rotulo: "Relatórios" },
   { href: "/admin/configuracoes", rotulo: "Configurações" },

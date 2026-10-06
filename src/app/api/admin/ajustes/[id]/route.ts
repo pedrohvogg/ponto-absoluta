@@ -82,3 +82,43 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   return NextResponse.json({ ok: true });
 }
+
+/**
+ * Remove uma solicitação que ainda não foi decidida.
+ *
+ * Só as abertas saem: uma aprovada já virou batida no espelho e uma rejeitada
+ * é o registro de que alguém disse não — apagar qualquer das duas deixaria o
+ * histórico contando uma história diferente do que aconteceu.
+ */
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const admin = await adminDaApi();
+  if (!admin) return NextResponse.json({ erro: "Sem permissão." }, { status: 403 });
+
+  const { id } = await params;
+  const solicitacao = await prisma.solicitacao.findUnique({
+    where: { id },
+    include: { usuario: { select: { nome: true } } },
+  });
+  if (!solicitacao) {
+    return NextResponse.json({ erro: "Solicitação não encontrada." }, { status: 404 });
+  }
+  if (solicitacao.status !== "PENDENTE" && solicitacao.status !== "AGUARDANDO_FUNCIONARIO") {
+    return NextResponse.json(
+      { erro: "Esta solicitação já foi decidida e fica no histórico." },
+      { status: 409 },
+    );
+  }
+
+  await prisma.solicitacao.delete({ where: { id } });
+
+  await prisma.auditoria.create({
+    data: {
+      usuarioId: admin.id,
+      acao: "AJUSTE_REMOVIDO",
+      detalhe: `${solicitacao.usuario.nome} ${solicitacao.dia} ${solicitacao.acao} ${solicitacao.tipo} (${solicitacao.status})`,
+      ip: ipDaRequisicao(req),
+    },
+  });
+
+  return NextResponse.json({ ok: true });
+}

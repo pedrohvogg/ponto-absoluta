@@ -108,9 +108,16 @@ describe("jornada — cálculo do dia", () => {
   });
 
   it("apura horas extras", () => {
+    // Com o intervalo batido, o tempo medido é só o do relógio — a presunção
+    // de almoço tem suíte própria e não deve interferir aqui.
     const j = calcularJornada(
       "2026-08-13",
-      [batida("ENTRADA", "2026-08-13", "08:00"), batida("SAIDA", "2026-08-13", "18:30")],
+      [
+        batida("ENTRADA", "2026-08-13", "08:00"),
+        batida("INICIO_INTERVALO", "2026-08-13", "12:00"),
+        batida("FIM_INTERVALO", "2026-08-13", "13:00"),
+        batida("SAIDA", "2026-08-13", "19:30"),
+      ],
       JORNADA_PADRAO,
       OPCOES,
     );
@@ -179,7 +186,10 @@ describe("jornada — cálculo do dia", () => {
       JORNADA_PADRAO,
       OPCOES,
     );
-    assert.equal(j.trabalhado, 480);
+    // 09:00 às 17:00 sem bater o almoço: oito horas de relógio menos a hora
+    // presumida. O que este teste garante é que a ordem invertida não quebra.
+    assert.equal(j.trabalhado, 420);
+    assert.equal(j.intervaloPresumido, 60);
     assert.equal(j.inconsistente, false);
   });
 
@@ -211,9 +221,11 @@ describe("jornada — cálculo do dia", () => {
       ),
     );
     const t = totalizar(dias);
-    assert.equal(t.trabalhado, 1080);
+    // Dois dias de 08:00 às 17:00 com o almoço descontado fecham a jornada
+    // em cheio — antes fechavam com duas horas extras que ninguém trabalhou.
+    assert.equal(t.trabalhado, 960);
     assert.equal(t.previsto, 960);
-    assert.equal(t.saldo, 120);
+    assert.equal(t.saldo, 0);
     assert.equal(t.diasTrabalhados, 2);
   });
 });
@@ -821,5 +833,133 @@ describe("rotas — portões não redirecionam chamadas de API", () => {
     for (const m of ["TROCAR_SENHA", "ACEITAR_TERMO"] as const) {
       assert.ok(MENSAGEM_BLOQUEIO[m].length > 10);
     }
+  });
+});
+
+describe("jornada — intervalo não registrado", () => {
+  it("desconta o intervalo previsto quando ninguém bateu saída e retorno", () => {
+    // 08:00 às 17:00 direto, sem bater o almoço: nove horas de relógio, mas a
+    // jornada é de oito.
+    const j = calcularJornada(
+      "2026-08-13",
+      [batida("ENTRADA", "2026-08-13", "08:00"), batida("SAIDA", "2026-08-13", "17:00")],
+      JORNADA_PADRAO,
+      OPCOES,
+    );
+    assert.equal(j.trabalhado, 480);
+    assert.equal(j.intervalo, 60);
+    assert.equal(j.intervaloPresumido, 60);
+    assert.equal(j.saldo, 0);
+  });
+
+  it("usa o intervalo real quando ele foi batido", () => {
+    const j = calcularJornada(
+      "2026-08-13",
+      [
+        batida("ENTRADA", "2026-08-13", "08:00"),
+        batida("INICIO_INTERVALO", "2026-08-13", "12:00"),
+        batida("FIM_INTERVALO", "2026-08-13", "12:30"),
+        batida("SAIDA", "2026-08-13", "17:00"),
+      ],
+      JORNADA_PADRAO,
+      OPCOES,
+    );
+    // Meia hora de almoço: conta meia hora, não a hora prevista.
+    assert.equal(j.intervalo, 30);
+    assert.equal(j.intervaloPresumido, 0);
+    assert.equal(j.trabalhado, 510);
+  });
+
+  it("não desconta em turno curto", () => {
+    // Três horas: ninguém almoça, e descontar uma hora seria roubo de jornada.
+    const j = calcularJornada(
+      "2026-08-13",
+      [batida("ENTRADA", "2026-08-13", "08:00"), batida("SAIDA", "2026-08-13", "11:00")],
+      JORNADA_PADRAO,
+      OPCOES,
+    );
+    assert.equal(j.trabalhado, 180);
+    assert.equal(j.intervaloPresumido, 0);
+  });
+
+  it("desconta a partir de seis horas, que é quando o descanso passa a ser devido", () => {
+    const seisEmPonto = calcularJornada(
+      "2026-08-13",
+      [batida("ENTRADA", "2026-08-13", "08:00"), batida("SAIDA", "2026-08-13", "14:00")],
+      JORNADA_PADRAO,
+      OPCOES,
+    );
+    assert.equal(seisEmPonto.intervaloPresumido, 60);
+
+    const poucoMenos = calcularJornada(
+      "2026-08-13",
+      [batida("ENTRADA", "2026-08-13", "08:00"), batida("SAIDA", "2026-08-13", "13:59")],
+      JORNADA_PADRAO,
+      OPCOES,
+    );
+    assert.equal(poucoMenos.intervaloPresumido, 0);
+  });
+
+  it("respeita o intervalo da escala do dia, não um valor fixo", () => {
+    // Sábado com intervalo de 30 min cadastrado: desconta 30, não 60.
+    const usuario = {
+      ...JORNADA_PADRAO,
+      horarios: [
+        { diaSemana: 6, trabalha: true, entrada: "08:00", saida: "15:30", intervaloMinutos: 30, cargaMinutos: 420 },
+      ],
+    };
+    const j = calcularJornada(
+      "2026-08-15",
+      [batida("ENTRADA", "2026-08-15", "08:00"), batida("SAIDA", "2026-08-15", "15:30")],
+      usuario,
+      OPCOES,
+    );
+    assert.equal(j.intervaloPresumido, 30);
+    assert.equal(j.trabalhado, 420);
+    assert.equal(j.saldo, 0);
+  });
+
+  it("escala sem intervalo não desconta nada", () => {
+    const usuario = {
+      ...JORNADA_PADRAO,
+      horarios: [
+        { diaSemana: 6, trabalha: true, entrada: "08:00", saida: "16:00", intervaloMinutos: 0, cargaMinutos: 480 },
+      ],
+    };
+    const j = calcularJornada(
+      "2026-08-15",
+      [batida("ENTRADA", "2026-08-15", "08:00"), batida("SAIDA", "2026-08-15", "16:00")],
+      usuario,
+      OPCOES,
+    );
+    assert.equal(j.intervaloPresumido, 0);
+    assert.equal(j.trabalhado, 480);
+  });
+
+  it("dia em aberto não ganha desconto de intervalo", () => {
+    // Só a entrada: não há tempo trabalhado de onde descontar.
+    const j = calcularJornada(
+      "2026-08-13",
+      [batida("ENTRADA", "2026-08-13", "08:00")],
+      JORNADA_PADRAO,
+      OPCOES,
+    );
+    assert.equal(j.trabalhado, 0);
+    assert.equal(j.intervaloPresumido, 0);
+  });
+
+  it("o desconto entra nos totais do período", () => {
+    const dias = ["2026-08-10", "2026-08-11"].map((d) =>
+      calcularJornada(
+        d,
+        [batida("ENTRADA", d, "08:00"), batida("SAIDA", d, "17:00")],
+        JORNADA_PADRAO,
+        OPCOES,
+      ),
+    );
+    const t = totalizar(dias);
+    assert.equal(t.trabalhado, 960);
+    assert.equal(t.saldo, 0);
+    assert.equal(t.intervalo, 120);
   });
 });

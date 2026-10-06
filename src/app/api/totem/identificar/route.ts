@@ -7,6 +7,7 @@ import { confiancaPercentual, descriptorValido } from "@/lib/face";
 import { diaDe, horaDe, limitesDoDia } from "@/lib/datas";
 import { proximoTipo, ROTULO_TIPO } from "@/lib/jornada";
 import { identificarNoTotem, MENSAGEM_TOTEM } from "@/lib/totem";
+import { pendenciasParaTotem } from "@/lib/pendencias";
 import { ipDaRequisicao } from "@/lib/requisicao";
 import { limitar } from "@/lib/limite";
 
@@ -90,5 +91,7 @@ export async function POST(req: Request) {
       rotulo: ROTULO_TIPO[r.tipo],
       hora: horaDe(r.momento, config.fusoHorario),
     })),
+    // Quem bate ponto só pelo totem não tem outro lugar para ver isso.
+    pendencias: await pendenciasParaTotem(funcionario.id),
   });
 }

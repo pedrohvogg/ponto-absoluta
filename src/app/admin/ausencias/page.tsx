@@ -40,7 +40,7 @@ export default async function PaginaAusencias() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl font-bold text-slate-900">Férias e ausências</h1>
+        <h1 className="text-xl font-bold text-slate-900">Férias e afastamentos</h1>
         <p className="text-sm text-slate-500">
           Agende o período e valide em seguida. Só depois de validado o sistema para de cobrar
           jornada nos dias — assim marcar férias e abonar horas continuam sendo dois atos separados.

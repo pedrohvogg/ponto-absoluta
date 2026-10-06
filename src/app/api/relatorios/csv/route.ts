@@ -79,10 +79,17 @@ export async function GET(req: Request) {
         situacaoDoDia(j),
         [
           j.inconsistente ? "sequencia incompleta" : "",
+          // Dizer de onde veio a hora descontada: sem isso a conferência vê um
+          // intervalo que não tem batida nenhuma por trás.
+          j.intervaloPresumido > 0
+            ? `intervalo de ${minutosParaHoras(j.intervaloPresumido)} presumido (nao foi batido)`
+            : "",
           // Todas as observações do dia, e não só a primeira: cada batida
-          // ajustada carrega o motivo dela, e perder os demais escondia
-          // exatamente a informação que se procura numa conferência.
-          ...j.detalhes.map((r) => r.observacao).filter(Boolean),
+          // ajustada carrega o motivo dela, e perder as demais escondia
+          // exatamente a informação que se procura numa conferência. Repetidas
+          // entram uma vez só — um lançamento de entrada e saída com o mesmo
+          // motivo não precisa dizer a mesma frase duas vezes.
+          ...new Set(j.detalhes.map((r) => r.observacao).filter(Boolean)),
         ]
           .filter(Boolean)
           .join(" · "),

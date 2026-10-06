@@ -1,8 +1,8 @@
 import "server-only";
 import { prisma } from "./prisma";
 import { obterConfig } from "./config";
-import { hojeStr, intervaloDeDias, limitesDoDia, somaDias } from "./datas";
-import { calcularJornada, type Pendencia } from "./jornada";
+import { diaBr, diaSemanaCurto, hojeStr, intervaloDeDias, limitesDoDia, somaDias } from "./datas";
+import { calcularJornada, ROTULO_PENDENCIA, ROTULO_TIPO, type Pendencia } from "./jornada";
 import { abonoDoDia } from "./ausencia";
 import type { EscalaDoDia } from "./escala";
 
@@ -164,4 +164,65 @@ function horaLocal(momento: Date, fuso: string): string {
     minute: "2-digit",
     hour12: false,
   }).format(momento);
+}
+
+export type PendenciasDoTotem = {
+  dias: {
+    dia: string;
+    diaBr: string;
+    diaSemana: string;
+    motivo: Pendencia;
+    rotuloMotivo: string;
+    entradaPrevista: string;
+    saidaPrevista: string;
+    batidas: { hora: string; rotulo: string }[];
+    jaSolicitado: boolean;
+  }[];
+  propostas: {
+    id: string;
+    dia: string;
+    diaBr: string;
+    acao: "INCLUIR" | "ALTERAR" | "EXCLUIR";
+    rotuloTipo: string;
+    horario: string | null;
+    motivo: string;
+    propostaPor: string | null;
+  }[];
+};
+
+/**
+ * As mesmas pendencias, já formatadas para a tela do totem.
+ *
+ * O quiosque não tem como formatar data nem traduzir rótulo no cliente sem
+ * carregar meia biblioteca, e a tela precisa ser legível de longe — então o
+ * texto sai pronto daqui.
+ */
+export async function pendenciasParaTotem(usuarioId: string): Promise<PendenciasDoTotem> {
+  const { dias, propostas } = await pendenciasDoFuncionario(usuarioId);
+  return {
+    dias: dias.map((d) => ({
+      dia: d.dia,
+      diaBr: diaBr(d.dia),
+      diaSemana: diaSemanaCurto(d.dia),
+      motivo: d.motivo,
+      rotuloMotivo: ROTULO_PENDENCIA[d.motivo],
+      entradaPrevista: d.escala.entrada,
+      saidaPrevista: d.escala.saida,
+      batidas: d.batidas.map((b) => ({
+        hora: b.hora,
+        rotulo: ROTULO_TIPO[b.tipo as keyof typeof ROTULO_TIPO] ?? b.tipo,
+      })),
+      jaSolicitado: d.jaSolicitado,
+    })),
+    propostas: propostas.map((p) => ({
+      id: p.id,
+      dia: p.dia,
+      diaBr: diaBr(p.dia),
+      acao: p.acao,
+      rotuloTipo: ROTULO_TIPO[p.tipo as keyof typeof ROTULO_TIPO] ?? p.tipo,
+      horario: p.horario,
+      motivo: p.motivo,
+      propostaPor: p.propostaPor,
+    })),
+  };
 }

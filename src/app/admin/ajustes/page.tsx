@@ -4,6 +4,7 @@ import { diaBr, hojeStr } from "@/lib/datas";
 import { ROTULO_TIPO } from "@/lib/jornada";
 import { EtiquetaStatus } from "@/components/Etiquetas";
 import DecidirAjuste from "@/components/DecidirAjuste";
+import RemoverAjuste from "@/components/RemoverAjuste";
 import ProporAjuste from "@/components/ProporAjuste";
 
 export const dynamic = "force-dynamic";
@@ -137,6 +138,12 @@ export default async function PaginaAjustes({
                 </div>
 
                 {s.status === "PENDENTE" && <DecidirAjuste id={s.id} />}
+                {/* Também sai a proposta que o funcionário ainda não respondeu:
+                    é o caso de um ajuste lançado por engano, que de outra forma
+                    ficaria esperando um de-acordo que nunca deveria acontecer. */}
+                {(s.status === "PENDENTE" || s.status === "AGUARDANDO_FUNCIONARIO") && (
+                  <RemoverAjuste id={s.id} aguardandoFuncionario={s.status === "AGUARDANDO_FUNCIONARIO"} />
+                )}
               </div>
             </li>
           ))}
