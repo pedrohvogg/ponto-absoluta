@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TipoRegistro } from "@prisma/client";
 import CameraFacial, { type ResultadoCaptura } from "@/components/CameraFacial";
-import { ROTULO_TIPO } from "@/lib/jornada";
+import { batidasFaltantes, listarTipos, ROTULO_TIPO } from "@/lib/jornada";
 import type { SecaoTermo } from "@/lib/termoUso";
 
 type Pessoa = {
@@ -35,6 +35,12 @@ type DiaPendenteTotem = {
   saidaPrevista: string;
   batidas: { hora: string; rotulo: string }[];
   jaSolicitado: boolean;
+  /**
+   * Batidas que a própria pessoa acabou de pular hoje. Presente só no dia de
+   * hoje, logo depois de uma batida fora de ordem: aí já se sabe exatamente
+   * qual faltou, e o pedido abre direto nela.
+   */
+  faltando?: TipoRegistro[];
 };
 
 type Pendencias = { dias: DiaPendenteTotem[]; propostas: PropostaTotem[] };
@@ -64,7 +70,14 @@ type Estado =
       pendencias: Pendencias;
     }
   /** Lista de dias em aberto, de onde a pessoa pede o ajuste. */
-  | { tela: "pendencias"; pessoa: Pessoa; pendencias: Pendencias; voltarPara: "confirmar" | "repouso" }
+  | {
+      tela: "pendencias";
+      pessoa: Pessoa;
+      pendencias: Pendencias;
+      voltarPara: "confirmar" | "repouso";
+      /** Dia cujo pedido já abre preenchido. */
+      abrirDia?: string;
+    }
   | { tela: "matricula"; mensagem: string }
   | {
       tela: "sucesso";
@@ -73,6 +86,8 @@ type Estado =
       aviso: string | null;
       pessoa: Pessoa;
       pendencias: Pendencias;
+      /** Hoje, quando a batida veio fora de ordem e alguma ficou para trás. */
+      faltantesHoje: DiaPendenteTotem | null;
     }
   | { tela: "erro"; mensagem: string };
 
@@ -115,6 +130,16 @@ export default function PainelTotem({
   const [relogio, setRelogio] = useState("");
   const [digitado, setDigitado] = useState("");
   const [concordo, setConcordo] = useState(false);
+  /**
+   * Batida fora de ordem esperando um segundo toque. No totem o toque já
+   * registra, então um dedo escorregado para "Saída" logo cedo viraria uma
+   * saída às 8h — o aviso antes dá a chance de voltar sem custar nada a quem
+   * realmente esqueceu a entrada.
+   */
+  const [foraDeOrdem, setForaDeOrdem] = useState<{
+    tipo: TipoRegistro;
+    faltando: TipoRegistro[];
+  } | null>(null);
 
   /** Captura da identificação em curso: reutilizada no registro e no aceite. */
   const capturaRef = useRef<ResultadoCaptura | null>(null);
@@ -152,6 +177,7 @@ export default function PainelTotem({
     matriculaRef.current = null;
     setDigitado("");
     setConcordo(false);
+    setForaDeOrdem(null);
     // Volta para o repouso, e não para a leitura: é o desmonte da câmera que
     // de fato apaga a luz do tablet e libera o aparelho.
     setEstado({ tela: "repouso" });
@@ -163,7 +189,7 @@ export default function PainelTotem({
       estado.tela === "sucesso"
         ? // Havendo ajuste a confirmar, a pessoa precisa de tempo para ler e
           // decidir — seis segundos seriam um "sim" por acidente.
-          estado.pendencias.propostas.length > 0
+          estado.pendencias.propostas.length > 0 || estado.faltantesHoje
           ? SEGUNDOS_INATIVIDADE
           : SEGUNDOS_SUCESSO
         : estado.tela === "erro"
@@ -229,9 +255,21 @@ export default function PainelTotem({
   );
 
   // ---- Registro ----
+  /** Toque num tipo de batida: fora de ordem pede confirmação antes. */
+  function escolher(tipo: TipoRegistro, batidas: Batida[]) {
+    const ultimo = batidas[batidas.length - 1]?.tipo ?? null;
+    const faltando = batidasFaltantes(ultimo, tipo);
+    if (faltando.length > 0) {
+      setForaDeOrdem({ tipo, faltando });
+      return;
+    }
+    registrar(tipo);
+  }
+
   async function registrar(tipo: TipoRegistro) {
     const captura = capturaRef.current;
     if (!captura) return voltarAoInicio();
+    setForaDeOrdem(null);
     setOcupado(true);
     try {
       const resposta = await fetch("/api/totem/registrar", {
@@ -259,6 +297,21 @@ export default function PainelTotem({
         aviso: dados.aviso,
         pessoa: dados.funcionario,
         pendencias: dados.pendencias ?? SEM_PENDENCIAS,
+        faltantesHoje: dados.batidasFaltantesHoje
+          ? {
+              dia: dados.batidasFaltantesHoje.dia,
+              diaBr: dados.batidasFaltantesHoje.diaBr,
+              diaSemana: dados.batidasFaltantesHoje.diaSemana,
+              rotuloMotivo: "batida pulada hoje",
+              entradaPrevista: dados.batidasFaltantesHoje.entradaPrevista,
+              saidaPrevista: dados.batidasFaltantesHoje.saidaPrevista,
+              batidas: [],
+              jaSolicitado: false,
+              faltando: dados.batidasFaltantesHoje.faltando.map(
+                (f: { tipo: TipoRegistro }) => f.tipo,
+              ),
+            }
+          : null,
       });
     } catch {
       setEstado({ tela: "erro", mensagem: "Sem conexão com o servidor. Chame o responsável." });
@@ -414,33 +467,65 @@ export default function PainelTotem({
                 </p>
               )}
 
-              <p className="mt-6 mb-2 text-center text-sm text-slate-300">
-                Toque no tipo de batida
-              </p>
-              <div className="grid grid-cols-2 gap-3">
-                {TIPOS.map(({ tipo, emoji }) => {
-                  const sugerido = tipo === estado.tipoSugerido;
-                  return (
+              {foraDeOrdem ? (
+                <div className="mt-6 rounded-xl bg-amber-500/15 p-5 text-center">
+                  <p className="text-lg font-semibold text-amber-100">
+                    Você ainda não registrou {listarTipos(foraDeOrdem.faltando)} hoje.
+                  </p>
+                  <p className="mt-2 text-sm text-amber-200/90">
+                    Dá para registrar <strong>{ROTULO_TIPO[foraDeOrdem.tipo]}</strong> agora mesmo
+                    assim — em seguida você pede o ajuste do horário que faltou.
+                  </p>
+                  <div className="mt-5 grid grid-cols-2 gap-3">
                     <button
-                      key={tipo}
                       type="button"
                       disabled={ocupado}
-                      onClick={() => registrar(tipo)}
-                      className={`rounded-xl px-4 py-6 text-lg font-semibold transition disabled:opacity-50 ${
-                        sugerido
-                          ? "bg-marca-600 text-white ring-4 ring-marca-400/40"
-                          : "bg-slate-800 text-slate-200 hover:bg-slate-700"
-                      }`}
+                      onClick={() => setForaDeOrdem(null)}
+                      className="rounded-xl bg-slate-800 px-4 py-4 font-semibold text-slate-200 disabled:opacity-50"
                     >
-                      <span className="mr-2">{emoji}</span>
-                      {ROTULO_TIPO[tipo]}
-                      {sugerido && (
-                        <span className="mt-1 block text-xs font-normal opacity-80">sugerido</span>
-                      )}
+                      Voltar
                     </button>
-                  );
-                })}
-              </div>
+                    <button
+                      type="button"
+                      disabled={ocupado}
+                      onClick={() => registrar(foraDeOrdem.tipo)}
+                      className="rounded-xl bg-marca-600 px-4 py-4 font-semibold text-white disabled:opacity-50"
+                    >
+                      Registrar {ROTULO_TIPO[foraDeOrdem.tipo]}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <p className="mt-6 mb-2 text-center text-sm text-slate-300">
+                    Toque no tipo de batida
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    {TIPOS.map(({ tipo, emoji }) => {
+                      const sugerido = tipo === estado.tipoSugerido;
+                      return (
+                        <button
+                          key={tipo}
+                          type="button"
+                          disabled={ocupado}
+                          onClick={() => escolher(tipo, estado.batidas)}
+                          className={`rounded-xl px-4 py-6 text-lg font-semibold transition disabled:opacity-50 ${
+                            sugerido
+                              ? "bg-marca-600 text-white ring-4 ring-marca-400/40"
+                              : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+                          }`}
+                        >
+                          <span className="mr-2">{emoji}</span>
+                          {ROTULO_TIPO[tipo]}
+                          {sugerido && (
+                            <span className="mt-1 block text-xs font-normal opacity-80">sugerido</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
 
               {contarEmAberto(estado.pendencias) > 0 && (
                 <button
@@ -476,18 +561,25 @@ export default function PainelTotem({
             <TelaPendencias
               pessoa={estado.pessoa}
               pendencias={estado.pendencias}
+              abrirDia={estado.abrirDia ?? null}
               capturaRef={capturaRef}
               matriculaRef={matriculaRef}
-              aoPedir={(dia) =>
+              aoPedir={(dia, tipo) =>
                 setEstado((atual) =>
                   atual.tela === "pendencias"
                     ? {
                         ...atual,
                         pendencias: {
                           ...atual.pendencias,
-                          dias: atual.pendencias.dias.map((d) =>
-                            d.dia === dia ? { ...d, jaSolicitado: true } : d,
-                          ),
+                          dias: atual.pendencias.dias.map((d) => {
+                            if (d.dia !== dia) return d;
+                            // Hoje pode ter mais de uma batida pulada: o dia
+                            // só sai da lista quando todas foram pedidas.
+                            const faltando = d.faltando?.filter((t) => t !== tipo);
+                            return faltando && faltando.length > 0
+                              ? { ...d, faltando }
+                              : { ...d, faltando, jaSolicitado: true };
+                          }),
                         },
                       }
                     : atual,
@@ -609,28 +701,59 @@ export default function PainelTotem({
               <p className="mt-1 text-xl text-slate-200">{estado.detalhe}</p>
               {estado.aviso && <p className="mt-3 text-sm text-amber-300">{estado.aviso}</p>}
 
-              {estado.pendencias.dias.filter((d) => !d.jaSolicitado).length > 0 && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setEstado({
-                      tela: "pendencias",
-                      pessoa: estado.pessoa,
-                      pendencias: estado.pendencias,
-                      voltarPara: "repouso",
-                    })
-                  }
-                  className="mx-auto mt-4 block max-w-md rounded-xl bg-amber-500/15 px-4 py-3 text-sm text-amber-200 underline"
-                >
-                  Você tem{" "}
-                  <strong>
-                    {contarEmAberto(estado.pendencias) === 1
-                      ? "1 dia sem ponto completo"
-                      : `${contarEmAberto(estado.pendencias)} dias sem ponto completo`}
-                  </strong>
-                  . Toque para resolver agora.
-                </button>
+              {estado.faltantesHoje && (
+                <div className="mx-auto mt-5 max-w-md rounded-xl bg-amber-500/15 p-4">
+                  <p className="font-semibold text-amber-100">
+                    Faltou registrar {listarTipos(estado.faltantesHoje.faltando ?? [])} hoje.
+                  </p>
+                  <p className="mt-1 text-sm text-amber-200/90">
+                    Peça o ajuste agora, enquanto lembra o horário — o responsável confere e lança.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (estado.tela !== "sucesso" || !estado.faltantesHoje) return;
+                      setEstado({
+                        tela: "pendencias",
+                        pessoa: estado.pessoa,
+                        pendencias: {
+                          ...estado.pendencias,
+                          dias: [estado.faltantesHoje, ...estado.pendencias.dias],
+                        },
+                        voltarPara: "repouso",
+                        abrirDia: estado.faltantesHoje.dia,
+                      });
+                    }}
+                    className="botao-primario mt-3 w-full py-3 text-base"
+                  >
+                    Pedir ajuste agora
+                  </button>
+                </div>
               )}
+
+              {!estado.faltantesHoje &&
+                estado.pendencias.dias.filter((d) => !d.jaSolicitado).length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setEstado({
+                        tela: "pendencias",
+                        pessoa: estado.pessoa,
+                        pendencias: estado.pendencias,
+                        voltarPara: "repouso",
+                      })
+                    }
+                    className="mx-auto mt-4 block max-w-md rounded-xl bg-amber-500/15 px-4 py-3 text-sm text-amber-200 underline"
+                  >
+                    Você tem{" "}
+                    <strong>
+                      {contarEmAberto(estado.pendencias) === 1
+                        ? "1 dia sem ponto completo"
+                        : `${contarEmAberto(estado.pendencias)} dias sem ponto completo`}
+                    </strong>
+                    . Toque para resolver agora.
+                  </button>
+                )}
 
               {estado.pendencias.propostas.map((p) => (
                 <ConfirmacaoDeAjuste
@@ -806,6 +929,7 @@ function contarEmAberto(p: Pendencias): number {
 function TelaPendencias({
   pessoa,
   pendencias,
+  abrirDia,
   capturaRef,
   matriculaRef,
   aoPedir,
@@ -813,12 +937,13 @@ function TelaPendencias({
 }: {
   pessoa: Pessoa;
   pendencias: Pendencias;
+  abrirDia: string | null;
   capturaRef: React.MutableRefObject<ResultadoCaptura | null>;
   matriculaRef: React.MutableRefObject<string | null>;
-  aoPedir: (dia: string) => void;
+  aoPedir: (dia: string, tipo: TipoRegistro) => void;
   aoVoltar: () => void;
 }) {
-  const [abertoEm, setAbertoEm] = useState<string | null>(null);
+  const [abertoEm, setAbertoEm] = useState<string | null>(abrirDia);
 
   return (
     <div>
@@ -837,9 +962,11 @@ function TelaPendencias({
                   {d.diaBr} <span className="font-normal text-slate-400">({d.diaSemana})</span>
                 </p>
                 <p className="text-xs text-slate-400">
-                  {d.batidas.length === 0
-                    ? `Nenhuma batida · previsto ${d.entradaPrevista}–${d.saidaPrevista}`
-                    : `Registrado ${d.batidas.map((b) => b.hora).join(", ")} · ${d.rotuloMotivo}`}
+                  {d.faltando && d.faltando.length > 0
+                    ? `Hoje · faltou ${listarTipos(d.faltando)}`
+                    : d.batidas.length === 0
+                      ? `Nenhuma batida · previsto ${d.entradaPrevista}–${d.saidaPrevista}`
+                      : `Registrado ${d.batidas.map((b) => b.hora).join(", ")} · ${d.rotuloMotivo}`}
                 </p>
               </div>
               {d.jaSolicitado ? (
@@ -858,12 +985,16 @@ function TelaPendencias({
             </div>
             {abertoEm === d.dia && !d.jaSolicitado && (
               <PedidoNoTotem
+                // Uma chave por batida: depois de pedir a entrada, o
+                // formulário reabre limpo já na próxima que faltou.
+                key={d.faltando?.[0] ?? d.dia}
                 dia={d}
                 capturaRef={capturaRef}
                 matriculaRef={matriculaRef}
-                aoEnviar={() => {
-                  setAbertoEm(null);
-                  aoPedir(d.dia);
+                aoEnviar={(tipo) => {
+                  const restam = d.faltando?.filter((t) => t !== tipo) ?? [];
+                  if (restam.length === 0) setAbertoEm(null);
+                  aoPedir(d.dia, tipo);
                 }}
               />
             )}
@@ -891,13 +1022,18 @@ function PedidoNoTotem({
   dia: DiaPendenteTotem;
   capturaRef: React.MutableRefObject<ResultadoCaptura | null>;
   matriculaRef: React.MutableRefObject<string | null>;
-  aoEnviar: () => void;
+  aoEnviar: (tipo: TipoRegistro) => void;
 }) {
-  // Sem batida nenhuma, o esquecido quase sempre é a entrada; com batida
-  // solta, costuma ser a saída que faltou.
+  // Batida pulada hoje: já se sabe qual foi. Nos dias antigos, sem batida
+  // nenhuma o esquecido quase sempre é a entrada; com batida solta, costuma
+  // ser a saída que faltou.
   const semBatida = dia.batidas.length === 0;
-  const [tipo, setTipo] = useState<TipoRegistro>(semBatida ? "ENTRADA" : "SAIDA");
-  const [horario, setHorario] = useState(semBatida ? dia.entradaPrevista : dia.saidaPrevista);
+  const inicial: TipoRegistro = dia.faltando?.[0] ?? (semBatida ? "ENTRADA" : "SAIDA");
+  const opcoes = dia.faltando && dia.faltando.length > 0
+    ? TIPOS.filter((t) => dia.faltando!.includes(t.tipo))
+    : TIPOS;
+  const [tipo, setTipo] = useState<TipoRegistro>(inicial);
+  const [horario, setHorario] = useState(horarioSugerido(inicial, dia));
   const [motivo, setMotivo] = useState(MOTIVOS[0]);
   const [erro, setErro] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
@@ -906,6 +1042,10 @@ function PedidoNoTotem({
     const captura = capturaRef.current;
     if (!captura) {
       setErro("Aproxime o rosto da câmera de novo para enviar o pedido.");
+      return;
+    }
+    if (!horario) {
+      setErro("Informe que horas foi a batida.");
       return;
     }
     setErro(null);
@@ -928,7 +1068,7 @@ function PedidoNoTotem({
         setErro(dados.erro ?? "Não foi possível enviar o pedido.");
         return;
       }
-      aoEnviar();
+      aoEnviar(tipo);
     } catch {
       setErro("Sem conexão com o servidor.");
     } finally {
@@ -941,7 +1081,7 @@ function PedidoNoTotem({
       <div>
         <p className="mb-1 text-xs uppercase tracking-wide text-slate-400">Qual batida faltou</p>
         <div className="grid grid-cols-2 gap-2">
-          {TIPOS.map(({ tipo: t, emoji }) => (
+          {opcoes.map(({ tipo: t, emoji }) => (
             <button
               key={t}
               type="button"
@@ -997,4 +1137,15 @@ function PedidoNoTotem({
       </button>
     </div>
   );
+}
+
+/**
+ * Horário que o pedido já traz preenchido. Entrada e saída têm hora certa na
+ * escala; o intervalo não tem, e chutar um horário ali convidaria a pessoa a
+ * confirmar sem olhar — então o campo vem vazio e ela informa.
+ */
+function horarioSugerido(tipo: TipoRegistro, dia: DiaPendenteTotem): string {
+  if (tipo === "ENTRADA") return dia.entradaPrevista;
+  if (tipo === "SAIDA") return dia.saidaPrevista;
+  return "";
 }

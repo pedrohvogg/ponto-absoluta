@@ -24,7 +24,7 @@ enum TipoRegistro {
 
 enum OrigemRegistro {
   FACIAL // batido pelo proprio funcionario, logado, com validacao facial
-  TOTEM  // batido no tablet da loja, com o funcionario identificado pelo rosto
+  TOTEM // batido no tablet da loja, com o funcionario identificado pelo rosto
   MANUAL // lancado diretamente por um administrador
   AJUSTE // criado pela aprovacao de uma solicitacao de ajuste
 }
@@ -86,36 +86,37 @@ model Usuario {
   /// Data de admissao (YYYY-MM-DD no fuso da empresa). Antes dela o funcionario
   /// nao devia jornada nenhuma, entao o relatorio nao cobra falta desses dias.
   /// Nulo mantem o comportamento antigo: cobra o periodo inteiro pedido.
-  admissaoEm String?
+  admissaoEm         String?
   /// Padrao da jornada, usado nos dias da semana sem horario proprio em
   /// HorarioDia. Continua valendo sozinho para quem foi cadastrado antes de
   /// existir horario por dia.
   /// Minutos de trabalho previstos por dia (ex.: 480 = 8h).
-  cargaDiariaMinutos Int    @default(480)
+  cargaDiariaMinutos Int     @default(480)
   /// Horario previsto de entrada no formato HH:mm.
-  entradaPrevista    String @default("08:00")
+  entradaPrevista    String  @default("08:00")
   /// Horario previsto de saida no formato HH:mm.
-  saidaPrevista      String @default("17:00")
+  saidaPrevista      String  @default("17:00")
   /// Minutos previstos de intervalo (almoco).
-  intervaloMinutos   Int    @default(60)
+  intervaloMinutos   Int     @default(60)
   /// Dias da semana trabalhados (0=domingo ... 6=sabado).
-  diasSemana         Int[]  @default([1, 2, 3, 4, 5])
+  diasSemana         Int[]   @default([1, 2, 3, 4, 5])
 
-  ultimoLogin DateTime?
-  criadoEm    DateTime  @default(now())
-  atualizadoEm DateTime @updatedAt
+  ultimoLogin  DateTime?
+  criadoEm     DateTime  @default(now())
+  atualizadoEm DateTime  @updatedAt
 
-  biometrias    Biometria[]
-  horarios      HorarioDia[]
-  registros     Registro[]      @relation("RegistrosDoUsuario")
-  registrosFeitos Registro[]    @relation("RegistrosLancadosPor")
-  solicitacoes  Solicitacao[]   @relation("SolicitacoesDoUsuario")
-  revisoes      Solicitacao[]   @relation("SolicitacoesRevisadasPor")
-  propostas     Solicitacao[]   @relation("SolicitacoesPropostasPor")
-  ausencias         Ausencia[]  @relation("AusenciasDoUsuario")
-  ausenciasCriadas  Ausencia[]  @relation("AusenciasCriadasPor")
-  ausenciasValidadas Ausencia[] @relation("AusenciasValidadasPor")
-  auditoria     Auditoria[]
+  biometrias         Biometria[]
+  horarios           HorarioDia[]
+  folgasSemanais     FolgaSemanal[]
+  registros          Registro[]     @relation("RegistrosDoUsuario")
+  registrosFeitos    Registro[]     @relation("RegistrosLancadosPor")
+  solicitacoes       Solicitacao[]  @relation("SolicitacoesDoUsuario")
+  revisoes           Solicitacao[]  @relation("SolicitacoesRevisadasPor")
+  propostas          Solicitacao[]  @relation("SolicitacoesPropostasPor")
+  ausencias          Ausencia[]     @relation("AusenciasDoUsuario")
+  ausenciasCriadas   Ausencia[]     @relation("AusenciasCriadasPor")
+  ausenciasValidadas Ausencia[]     @relation("AusenciasValidadasPor")
+  auditoria          Auditoria[]
 
   @@index([papel, ativo])
 }
@@ -125,21 +126,43 @@ model Usuario {
 /// servir para a semana toda. A ausencia de linha para um dia significa "usa o
 /// padrao do Usuario", o que mantem funcionando quem foi cadastrado antes.
 model HorarioDia {
-  id        String  @id @default(cuid())
-  usuarioId String
-  usuario   Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  id               String  @id @default(cuid())
+  usuarioId        String
+  usuario          Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
   /// 0=domingo ... 6=sabado
-  diaSemana Int
+  diaSemana        Int
   /// Falso marca folga: o dia nao cobra jornada.
-  trabalha  Boolean @default(true)
-  entrada   String  @default("08:00")
-  saida     String  @default("17:00")
-  intervaloMinutos Int @default(60)
+  trabalha         Boolean @default(true)
+  entrada          String  @default("08:00")
+  saida            String  @default("17:00")
+  intervaloMinutos Int     @default(60)
   /// Minutos previstos no dia. Normalmente saida - entrada - intervalo, mas
   /// fica editavel porque a jornada contratada nem sempre bate com o relogio.
-  cargaMinutos Int  @default(480)
+  cargaMinutos     Int     @default(480)
 
   @@unique([usuarioId, diaSemana])
+  @@index([usuarioId])
+}
+
+/// Folgas de uma semana, marcadas no painel de folgas.
+///
+/// Uma semana sem registro repete a ultima semana marcada antes dela: a escala
+/// da loja costuma se manter de uma semana para outra, e o gestor so mexe
+/// quando muda. Um registro com `dias` vazio quer dizer "nesta semana, nenhuma
+/// folga" — e diferente de nao ter registro, que herda a semana anterior.
+model FolgaSemanal {
+  id              String   @id @default(cuid())
+  usuarioId       String
+  usuario         Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  /// Segunda-feira da semana, YYYY-MM-DD.
+  semana          String
+  /// Dias de folga na semana: 0=domingo ... 6=sabado.
+  dias            Int[]
+  atualizadoPorId String?
+  criadoEm        DateTime @default(now())
+  atualizadoEm    DateTime @updatedAt
+
+  @@unique([usuarioId, semana])
   @@index([usuarioId])
 }
 
@@ -159,10 +182,10 @@ model Ausencia {
 
   observacao String? @db.Text
 
-  criadoPorId String?
-  criadoPor   Usuario? @relation("AusenciasCriadasPor", fields: [criadoPorId], references: [id], onDelete: SetNull)
+  criadoPorId   String?
+  criadoPor     Usuario?  @relation("AusenciasCriadasPor", fields: [criadoPorId], references: [id], onDelete: SetNull)
   validadoPorId String?
-  validadoPor   Usuario? @relation("AusenciasValidadasPor", fields: [validadoPorId], references: [id], onDelete: SetNull)
+  validadoPor   Usuario?  @relation("AusenciasValidadasPor", fields: [validadoPorId], references: [id], onDelete: SetNull)
   validadoEm    DateTime?
 
   criadoEm DateTime @default(now())
@@ -174,22 +197,22 @@ model Ausencia {
 /// Assinatura facial (descriptor de 128 dimensoes gerado pelo face-api no navegador).
 /// A imagem original nunca e persistida aqui: guardamos apenas o vetor.
 model Biometria {
-  id         String  @id @default(cuid())
+  id         String   @id @default(cuid())
   usuarioId  String
-  usuario    Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  usuario    Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
   /// 128 numeros float serializados como JSON.
   descriptor Json
   /// Miniatura JPEG capturada no cadastro, para conferencia visual do admin.
-  fotoBase64 String? @db.Text
+  fotoBase64 String?  @db.Text
   criadoEm   DateTime @default(now())
 
   @@index([usuarioId])
 }
 
 model Registro {
-  id        String       @id @default(cuid())
+  id        String         @id @default(cuid())
   usuarioId String
-  usuario   Usuario      @relation("RegistrosDoUsuario", fields: [usuarioId], references: [id], onDelete: Cascade)
+  usuario   Usuario        @relation("RegistrosDoUsuario", fields: [usuarioId], references: [id], onDelete: Cascade)
   tipo      TipoRegistro
   /// Momento do registro (UTC).
   momento   DateTime
@@ -203,11 +226,11 @@ model Registro {
   fotoBase64    String? @db.Text
 
   // ---- Geolocalizacao ----
-  latitude       Float?
-  longitude      Float?
-  precisaoMetros Float?
+  latitude        Float?
+  longitude       Float?
+  precisaoMetros  Float?
   distanciaMetros Float?
-  dentroDaCerca  Boolean?
+  dentroDaCerca   Boolean?
 
   observacao   String?
   ip           String?
@@ -227,16 +250,16 @@ model Solicitacao {
   usuarioId String
   usuario   Usuario @relation("SolicitacoesDoUsuario", fields: [usuarioId], references: [id], onDelete: Cascade)
 
-  acao AcaoSolicitacao @default(INCLUIR)
+  acao           AcaoSolicitacao @default(INCLUIR)
   /// Dia de competencia (YYYY-MM-DD).
-  dia  String
-  tipo TipoRegistro
+  dia            String
+  tipo           TipoRegistro
   /// Horario pedido no formato HH:mm (nulo quando a acao e EXCLUIR).
-  horario String?
+  horario        String?
   /// Registro alvo quando a acao e ALTERAR ou EXCLUIR.
   registroAlvoId String?
 
-  motivo String @db.Text
+  motivo String            @db.Text
   status StatusSolicitacao @default(PENDENTE)
 
   /// Preenchido quando quem propos o ajuste foi o administrador. Nesse caminho
@@ -265,36 +288,36 @@ model Config {
   fusoHorario String @default("America/Sao_Paulo")
 
   // ---- Cerca virtual ----
-  geofenceAtiva   Boolean @default(false)
+  geofenceAtiva    Boolean @default(false)
   /// Bloqueia o registro fora do raio (quando falso, apenas sinaliza para o admin).
   geofenceBloqueia Boolean @default(false)
-  latitude        Float?
-  longitude       Float?
-  raioMetros      Int     @default(200)
+  latitude         Float?
+  longitude        Float?
+  raioMetros       Int     @default(200)
 
   // ---- Biometria facial ----
   /// Distancia maxima aceita entre o rosto capturado e a biometria (0.4 rigido, 0.6 tolerante).
   /// Usado na conferencia 1:1, quando o sistema ja sabe quem e a pessoa.
-  limiarFacial   Float   @default(0.5)
+  limiarFacial Float @default(0.5)
 
   // ---- Identificacao no totem (1:N) ----
   /// Descobrir quem e a pessoa entre todos os funcionarios erra mais do que
   /// confirmar uma pessoa conhecida, entao o limite aqui e mais rigoroso.
-  limiarTotem    Float   @default(0.45)
+  limiarTotem            Float   @default(0.45)
   /// Distancia minima entre o melhor e o segundo melhor candidato. Se dois
   /// funcionarios ficarem parecidos demais, o totem pede a matricula em vez de
   /// arriscar bater o ponto na pessoa errada.
-  margemTotem    Float   @default(0.06)
+  margemTotem            Float   @default(0.06)
   /// Guardar a selfie do registro como comprovante para o admin.
-  salvarFoto     Boolean @default(true)
+  salvarFoto             Boolean @default(true)
   /// Intervalo minimo entre dois registros do mesmo funcionario, em minutos.
-  intervaloMinimoMinutos Int @default(1)
+  intervaloMinimoMinutos Int     @default(1)
 
   // ---- Jornada ----
   /// Tolerancia em minutos para atraso/saida antecipada.
   toleranciaMinutos Int @default(10)
 
-  atualizadoEm DateTime @updatedAt @default(now())
+  atualizadoEm DateTime @default(now()) @updatedAt
 }
 
 model Auditoria {

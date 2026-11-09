@@ -28,12 +28,15 @@ export async function GET(req: Request) {
   const de = validarDia(url.searchParams.get("de")) ?? mes.de;
   const ate = validarDia(url.searchParams.get("ate")) ?? mes.ate;
   const funcionarioId = url.searchParams.get("funcionarioId");
+  // Mesmo filtro da tela: sem pedir os inativos, a exportação da equipe traz
+  // só quem está ativo.
+  const incluirInativos = url.searchParams.get("situacao") === "todos";
 
   const ids = funcionarioId
     ? [funcionarioId]
     : (
         await prisma.usuario.findMany({
-          where: { papel: "FUNCIONARIO" },
+          where: { papel: "FUNCIONARIO", ...(incluirInativos ? {} : { ativo: true }) },
           orderBy: { nome: "asc" },
           select: { id: true },
         })

@@ -18,12 +18,16 @@ export const dynamic = "force-dynamic";
 export default async function PaginaRelatorios({
   searchParams,
 }: {
-  searchParams: Promise<{ funcionarioId?: string; de?: string; ate?: string }>;
+  searchParams: Promise<{ funcionarioId?: string; de?: string; ate?: string; situacao?: string }>;
 }) {
   const config = await obterConfig();
   const hoje = hojeStr(config.fusoHorario);
   const mes = limitesDoMes(hoje);
-  const { funcionarioId, de = mes.de, ate = mes.ate } = await searchParams;
+  const { funcionarioId, de = mes.de, ate = mes.ate, situacao } = await searchParams;
+  // Ativos por padrão: o relatório da equipe é, quase sempre, o fechamento de
+  // quem está trabalhando. Quem saiu no meio do período ainda pode precisar
+  // do espelho (rescisão), e para isso existe a opção de incluir inativos.
+  const incluirInativos = situacao === "todos";
 
   const funcionarios = await prisma.usuario.findMany({
     where: { papel: "FUNCIONARIO" },
@@ -33,12 +37,19 @@ export default async function PaginaRelatorios({
 
   // Sem funcionário escolhido, o relatório sai com a equipe inteira — era o
   // que o CSV já fazia, e a tela pedia uma seleção que o arquivo não exigia.
-  const alvos = funcionarioId ? [funcionarioId] : funcionarios.map((f) => f.id);
+  const alvos = funcionarioId
+    ? [funcionarioId]
+    : funcionarios.filter((f) => incluirInativos || f.ativo).map((f) => f.id);
   const espelhos = (await Promise.all(alvos.map((id) => espelhoDePonto(id, de, ate)))).filter(
     (e): e is NonNullable<typeof e> => e !== null,
   );
 
-  const parametros = new URLSearchParams({ de, ate, ...(funcionarioId ? { funcionarioId } : {}) });
+  const parametros = new URLSearchParams({
+    de,
+    ate,
+    ...(funcionarioId ? { funcionarioId } : {}),
+    ...(incluirInativos ? { situacao: "todos" } : {}),
+  });
 
   return (
     <div className="space-y-5">
@@ -70,6 +81,20 @@ export default async function PaginaRelatorios({
           </select>
         </div>
         <div>
+          <label htmlFor="situacao" className="rotulo text-xs">
+            Situação
+          </label>
+          <select
+            id="situacao"
+            name="situacao"
+            defaultValue={incluirInativos ? "todos" : "ativos"}
+            className="campo py-1.5"
+          >
+            <option value="ativos">Somente ativos</option>
+            <option value="todos">Ativos e inativos</option>
+          </select>
+        </div>
+        <div>
           <label htmlFor="de" className="rotulo text-xs">
             De
           </label>
@@ -90,7 +115,9 @@ export default async function PaginaRelatorios({
 
       {espelhos.length === 0 ? (
         <div className="cartao p-8 text-center text-slate-500">
-          Nenhum funcionário cadastrado para gerar o espelho.
+          {funcionarios.length === 0
+            ? "Nenhum funcionário cadastrado para gerar o espelho."
+            : "Nenhum funcionário ativo. Escolha “Ativos e inativos” para ver os demais."}
         </div>
       ) : (
         <div className="space-y-5">

@@ -1,9 +1,12 @@
 import "server-only";
 import { prisma } from "./prisma";
 import { obterConfig } from "./config";
-import { hojeStr, intervaloDeDias, limitesDoDia } from "./datas";
+import { diaSemanaNumero, hojeStr, intervaloDeDias, limitesDoDia } from "./datas";
 import { calcularJornada, situacaoAtual, totalizar, type JornadaDoDia } from "./jornada";
 import { abonoDoDia, type AusenciaSimples } from "./ausencia";
+import { DIAS_DO_PAINEL, diasDaSemana, folgaNoDia, folgasDaSemana } from "./folgas";
+import { escalaDoDia } from "./escala";
+import { folgasMarcadas } from "./folgasSalvas";
 
 /** Campos de jornada necessários para o cálculo. */
 const SELECAO_USUARIO = {
@@ -82,11 +85,17 @@ export async function panoramaDoDia(dia: string) {
     prisma.biometria.groupBy({ by: ["usuarioId"], _count: { _all: true } }),
   ]);
 
-  const ausencias = await ausenciasDoPeriodo(
-    funcionarios.map((f) => f.id),
-    dia,
-    dia,
-  );
+  const [ausencias, folgas] = await Promise.all([
+    ausenciasDoPeriodo(
+      funcionarios.map((f) => f.id),
+      dia,
+      dia,
+    ),
+    folgasMarcadas(
+      funcionarios.map((f) => f.id),
+      dia,
+    ),
+  ]);
 
   const porUsuario = new Map<string, typeof registros>();
   for (const r of registros) {
@@ -104,6 +113,7 @@ export async function panoramaDoDia(dia: string) {
       toleranciaMinutos: config.toleranciaMinutos,
       abono: abonoDoDia(ausencias.get(f.id), dia),
       hoje,
+      folgaSemanal: folgaNoDia(folgas.get(f.id), dia),
     });
     return {
       funcionario: f,
@@ -163,6 +173,7 @@ export async function espelhoDePonto(usuarioId: string, de: string, ateSolicitad
   }
 
   const ausencias = (await ausenciasDoPeriodo([usuarioId], de, ate)).get(usuarioId) ?? [];
+  const folgas = (await folgasMarcadas([usuarioId], ate)).get(usuarioId);
 
   const jornadas: (JornadaDoDia & { detalhes: typeof registros })[] = intervaloDeDias(de, ate).map(
     (dia) => {
@@ -173,6 +184,7 @@ export async function espelhoDePonto(usuarioId: string, de: string, ateSolicitad
           toleranciaMinutos: config.toleranciaMinutos,
           abono: abonoDoDia(ausencias, dia),
           hoje,
+          folgaSemanal: folgaNoDia(folgas, dia),
         }),
         detalhes: doDia,
       };
@@ -208,7 +220,7 @@ export async function saldosDoPeriodo(de: string, ateSolicitado: string, incluir
   const inicio = limitesDoDia(de, config.fusoHorario).inicio;
   const fim = limitesDoDia(ate, config.fusoHorario).fim;
 
-  const [registros, ausencias, pendentesAbertas] = await Promise.all([
+  const [registros, ausencias, pendentesAbertas, folgas] = await Promise.all([
     prisma.registro.findMany({
       where: { usuarioId: { in: ids }, momento: { gte: inicio, lt: fim } },
       orderBy: { momento: "asc" },
@@ -220,6 +232,7 @@ export async function saldosDoPeriodo(de: string, ateSolicitado: string, incluir
       where: { usuarioId: { in: ids }, status: { in: ["PENDENTE", "AGUARDANDO_FUNCIONARIO"] } },
       _count: { _all: true },
     }),
+    folgasMarcadas(ids, ate),
   ]);
 
   const porUsuarioDia = new Map<string, typeof registros>();
@@ -239,6 +252,7 @@ export async function saldosDoPeriodo(de: string, ateSolicitado: string, incluir
         toleranciaMinutos: config.toleranciaMinutos,
         abono: abonoDoDia(ausencias.get(f.id), dia),
         hoje,
+        folgaSemanal: folgaNoDia(folgas.get(f.id), dia),
       }),
     );
     return {
@@ -252,3 +266,58 @@ export async function saldosDoPeriodo(de: string, ateSolicitado: string, incluir
 }
 
 export type LinhaSaldo = Awaited<ReturnType<typeof saldosDoPeriodo>>["linhas"][number];
+
+/**
+ * Grade do painel de folgas: cada funcionário ativo nos sete dias da semana.
+ *
+ * Cada célula diz se o dia é de trabalho pelo horário fixo, se o painel deu
+ * folga e se há férias/afastamento validado — o gestor precisa ver os três
+ * para não montar uma escala com a loja vazia.
+ */
+export async function gradeDeFolgas(segunda: string) {
+  const dias = diasDaSemana(segunda);
+  const domingo = dias[6];
+
+  const funcionarios = await prisma.usuario.findMany({
+    where: { papel: "FUNCIONARIO", ativo: true },
+    select: SELECAO_USUARIO,
+    orderBy: { nome: "asc" },
+  });
+  const ids = funcionarios.map((f) => f.id);
+  const [folgas, ausencias] = await Promise.all([
+    folgasMarcadas(ids, domingo),
+    ausenciasDoPeriodo(ids, segunda, domingo),
+  ]);
+
+  const linhas = funcionarios.map((f) => {
+    const marcadas = folgas.get(f.id) ?? [];
+    const vigor = folgasDaSemana(marcadas, segunda);
+    const celulas = DIAS_DO_PAINEL.map((diaSemana) => {
+      const dia = dias[(diaSemana + 6) % 7];
+      const fixa = escalaDoDia(f, f.horarios, diaSemanaNumero(dia));
+      const abono = abonoDoDia(ausencias.get(f.id), dia);
+      return {
+        dia,
+        diaSemana,
+        /** O horário fixo já não prevê trabalho neste dia. */
+        foraDaEscala: !fixa.trabalha,
+        folga: fixa.trabalha && folgaNoDia(marcadas, dia),
+        entrada: fixa.entrada,
+        saida: fixa.saida,
+        abono: abono ? abono.tipo : null,
+      };
+    });
+    return {
+      id: f.id,
+      nome: f.nome,
+      cargo: f.cargo,
+      celulas,
+      marcadaNestaSemana: !!vigor && vigor.repeteDe === null,
+      repeteDe: vigor?.repeteDe ?? null,
+    };
+  });
+
+  return { dias, linhas };
+}
+
+export type LinhaDeFolgas = Awaited<ReturnType<typeof gradeDeFolgas>>["linhas"][number];

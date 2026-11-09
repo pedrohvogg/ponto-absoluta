@@ -6,7 +6,7 @@ import { obterConfig } from "@/lib/config";
 import { descriptorValido, melhorDistancia, confiancaPercentual } from "@/lib/face";
 import { dentroDaCerca as avaliarCerca, distanciaMetros } from "@/lib/geo";
 import { diaDe, horaDe, limitesDoDia } from "@/lib/datas";
-import { ROTULO_TIPO, validarSequencia } from "@/lib/jornada";
+import { batidasFaltantes, ROTULO_TIPO } from "@/lib/jornada";
 import { agenteDaRequisicao, ipDaRequisicao } from "@/lib/requisicao";
 import { limitar } from "@/lib/limite";
 
@@ -157,10 +157,9 @@ export async function POST(req: Request) {
     }
   }
 
-  const problema = validarSequencia(ultimo?.tipo ?? null, dados.tipo);
-  if (problema) {
-    return NextResponse.json({ erro: problema }, { status: 409 });
-  }
+  // Fora de ordem não barra mais: a batida entra e o que faltou volta na
+  // resposta, para a pessoa pedir o ajuste enquanto ainda lembra o horário.
+  const faltando = batidasFaltantes(ultimo?.tipo ?? null, dados.tipo);
 
   // ---- 4. Grava ----
   const foto =
@@ -195,6 +194,7 @@ export async function POST(req: Request) {
       dia,
     },
     confianca: confiancaPercentual(distancia),
+    faltando: faltando.map((t) => ({ tipo: t, rotulo: ROTULO_TIPO[t] })),
     aviso:
       dentroDaCerca === false
         ? `Registrado a ${distanciaDaEmpresa} m do local de trabalho — o administrador será informado.`

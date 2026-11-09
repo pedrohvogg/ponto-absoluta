@@ -11,8 +11,16 @@ import {
   paraUtc,
   somaDias,
 } from "../src/lib/datas";
-import { calcularJornada, proximoTipo, situacaoAtual, totalizar, validarSequencia } from "../src/lib/jornada";
+import {
+  batidasFaltantes,
+  calcularJornada,
+  listarTipos,
+  proximoTipo,
+  situacaoAtual,
+  totalizar,
+} from "../src/lib/jornada";
 import { dentroDaCerca, distanciaMetros, MARGEM_GPS_MAXIMA } from "../src/lib/geo";
+import { diasDaSemana, folgaNoDia, folgasDaSemana, segundaDaSemana } from "../src/lib/folgas";
 import {
   descriptorValido,
   distanciaEuclidiana,
@@ -243,14 +251,33 @@ describe("jornada — sequência de batidas", () => {
     );
   });
 
-  it("bloqueia transições impossíveis", () => {
-    assert.equal(validarSequencia(null, "ENTRADA"), null);
-    assert.notEqual(validarSequencia(null, "SAIDA"), null);
-    assert.notEqual(validarSequencia("ENTRADA", "ENTRADA"), null);
-    assert.notEqual(validarSequencia("ENTRADA", "FIM_INTERVALO"), null);
-    assert.equal(validarSequencia("INICIO_INTERVALO", "FIM_INTERVALO"), null);
-    assert.notEqual(validarSequencia("INICIO_INTERVALO", "SAIDA"), null);
-    assert.equal(validarSequencia("SAIDA", "ENTRADA"), null);
+  it("sequência em ordem não aponta nada faltando", () => {
+    assert.deepEqual(batidasFaltantes(null, "ENTRADA"), []);
+    assert.deepEqual(batidasFaltantes("ENTRADA", "INICIO_INTERVALO"), []);
+    assert.deepEqual(batidasFaltantes("INICIO_INTERVALO", "FIM_INTERVALO"), []);
+    assert.deepEqual(batidasFaltantes("FIM_INTERVALO", "SAIDA"), []);
+    assert.deepEqual(batidasFaltantes("ENTRADA", "SAIDA"), []);
+    assert.deepEqual(batidasFaltantes("SAIDA", "ENTRADA"), []);
+  });
+
+  it("esqueceu a entrada: o resto do dia é aceito e a entrada é apontada", () => {
+    assert.deepEqual(batidasFaltantes(null, "INICIO_INTERVALO"), ["ENTRADA"]);
+    assert.deepEqual(batidasFaltantes(null, "SAIDA"), ["ENTRADA"]);
+    assert.deepEqual(batidasFaltantes(null, "FIM_INTERVALO"), ["ENTRADA", "INICIO_INTERVALO"]);
+    // Segundo turno: saiu, voltou e foi direto ao almoço sem bater a volta.
+    assert.deepEqual(batidasFaltantes("SAIDA", "INICIO_INTERVALO"), ["ENTRADA"]);
+  });
+
+  it("aponta a batida do meio que ficou para trás", () => {
+    assert.deepEqual(batidasFaltantes("INICIO_INTERVALO", "SAIDA"), ["FIM_INTERVALO"]);
+    assert.deepEqual(batidasFaltantes("ENTRADA", "FIM_INTERVALO"), ["INICIO_INTERVALO"]);
+    assert.deepEqual(batidasFaltantes("ENTRADA", "ENTRADA"), ["SAIDA"]);
+    assert.deepEqual(batidasFaltantes("INICIO_INTERVALO", "ENTRADA"), ["FIM_INTERVALO", "SAIDA"]);
+  });
+
+  it("lista as batidas faltantes em frase", () => {
+    assert.equal(listarTipos(["ENTRADA"]), "Entrada");
+    assert.equal(listarTipos(["ENTRADA", "INICIO_INTERVALO"]), "Entrada e Saída p/ intervalo");
   });
 
   it("descreve a situação atual", () => {
@@ -723,6 +750,39 @@ describe("jornada — pontos pendentes", () => {
     assert.equal(j.pendencia, "INCOMPLETO");
   });
 
+  it("dia que começa sem entrada vira pendência", () => {
+    // Batida fora de ordem agora é aceita; o dia tem que continuar cobrando a
+    // entrada que não veio.
+    const j = calcularJornada(
+      "2026-08-17",
+      [
+        batida("INICIO_INTERVALO", "2026-08-17", "12:00"),
+        batida("FIM_INTERVALO", "2026-08-17", "13:00"),
+        batida("SAIDA", "2026-08-17", "17:00"),
+      ],
+      JORNADA_PADRAO,
+      { ...OPCOES, hoje: HOJE },
+    );
+    assert.equal(j.pendencia, "INCOMPLETO");
+    // Só a tarde, que tem começo e fim, conta como trabalhada.
+    assert.equal(j.trabalhado, 240);
+  });
+
+  it("dia com entrada e saída mas sem o retorno do almoço vira pendência", () => {
+    const j = calcularJornada(
+      "2026-08-17",
+      [
+        batida("ENTRADA", "2026-08-17", "08:00"),
+        batida("INICIO_INTERVALO", "2026-08-17", "12:00"),
+        batida("SAIDA", "2026-08-17", "17:00"),
+      ],
+      JORNADA_PADRAO,
+      { ...OPCOES, hoje: HOJE },
+    );
+    assert.equal(j.inconsistente, true);
+    assert.equal(j.pendencia, "INCOMPLETO");
+  });
+
   it("o dia de hoje nunca é pendência", () => {
     // Quem está trabalhando agora ainda não tem saída — cobrar seria alarme falso.
     const j = calcularJornada(HOJE, [batida("ENTRADA", HOJE, "08:00")], JORNADA_PADRAO, {
@@ -961,5 +1021,68 @@ describe("jornada — intervalo não registrado", () => {
     assert.equal(t.trabalhado, 960);
     assert.equal(t.saldo, 0);
     assert.equal(t.intervalo, 120);
+  });
+});
+
+describe("painel de folgas — semana a semana", () => {
+  it("a semana começa na segunda", () => {
+    assert.equal(segundaDaSemana("2026-11-10"), "2026-11-09"); // terça
+    assert.equal(segundaDaSemana("2026-11-09"), "2026-11-09"); // segunda
+    assert.equal(segundaDaSemana("2026-11-15"), "2026-11-09"); // domingo fecha a semana
+    assert.deepEqual(diasDaSemana("2026-11-09"), [
+      "2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13", "2026-11-14", "2026-11-15",
+    ]);
+  });
+
+  it("antes da primeira marcação não há folga nenhuma", () => {
+    assert.equal(folgasDaSemana([], "2026-11-09"), null);
+    assert.equal(folgaNoDia([{ semana: "2026-11-16", dias: [3] }], "2026-11-11"), false);
+  });
+
+  it("semana sem marcação repete a última marcada antes dela", () => {
+    const marcadas = [
+      { semana: "2026-11-02", dias: [3] },
+      { semana: "2026-11-16", dias: [6] },
+    ];
+    assert.deepEqual(folgasDaSemana(marcadas, "2026-11-09"), { dias: [3], repeteDe: "2026-11-02" });
+    assert.deepEqual(folgasDaSemana(marcadas, "2026-11-16"), { dias: [6], repeteDe: null });
+    // Três semanas depois, ainda herda a última marcada.
+    assert.deepEqual(folgasDaSemana(marcadas, "2026-12-07"), { dias: [6], repeteDe: "2026-11-16" });
+    assert.equal(folgaNoDia(marcadas, "2026-11-11"), true); // quarta herdada
+    assert.equal(folgaNoDia(marcadas, "2026-11-12"), false);
+  });
+
+  it("semana marcada sem folga nenhuma não herda a anterior", () => {
+    const marcadas = [
+      { semana: "2026-11-02", dias: [3] },
+      { semana: "2026-11-09", dias: [] },
+    ];
+    assert.equal(folgaNoDia(marcadas, "2026-11-11"), false);
+    assert.equal(folgaNoDia(marcadas, "2026-11-18"), false);
+  });
+
+  it("folga do painel tira a jornada do dia e não vira pendência", () => {
+    const j = calcularJornada("2026-08-12", [], JORNADA_PADRAO, {
+      ...OPCOES,
+      hoje: "2026-08-20",
+      folgaSemanal: true,
+    });
+    assert.equal(j.previsto, 0);
+    assert.equal(j.saldo, 0);
+    assert.equal(j.pendencia, null);
+    assert.equal(j.folgaSemanal, true);
+  });
+
+  it("folga do painel num dia que o horário fixo já não trabalha não muda nada", () => {
+    // 2026-08-16 é domingo, fora da escala padrão.
+    const j = calcularJornada("2026-08-16", [], JORNADA_PADRAO, { ...OPCOES, folgaSemanal: true });
+    assert.equal(j.folgaSemanal, false);
+    assert.equal(j.diaUtil, false);
+  });
+
+  it("os outros dias da semana seguem o horário normal", () => {
+    const j = calcularJornada("2026-08-13", [], JORNADA_PADRAO, { ...OPCOES, hoje: "2026-08-20" });
+    assert.equal(j.previsto, 480);
+    assert.equal(j.pendencia, "SEM_REGISTRO");
   });
 });

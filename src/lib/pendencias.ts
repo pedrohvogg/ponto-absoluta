@@ -4,6 +4,8 @@ import { obterConfig } from "./config";
 import { diaBr, diaSemanaCurto, hojeStr, intervaloDeDias, limitesDoDia, somaDias } from "./datas";
 import { calcularJornada, ROTULO_PENDENCIA, ROTULO_TIPO, type Pendencia } from "./jornada";
 import { abonoDoDia } from "./ausencia";
+import { folgaNoDia } from "./folgas";
+import { folgasMarcadas } from "./folgasSalvas";
 import type { EscalaDoDia } from "./escala";
 
 /** Quantos dias para tras o alerta olha, quando nao for pedido outro limite. */
@@ -63,7 +65,7 @@ export async function pendenciasDoFuncionario(usuarioId: string, janelaDias = JA
   const inicio = limitesDoDia(de, config.fusoHorario).inicio;
   const fim = limitesDoDia(ate, config.fusoHorario).fim;
 
-  const [registros, ausencias, solicitacoes] = await Promise.all([
+  const [registros, ausencias, solicitacoes, folgas] = await Promise.all([
     prisma.registro.findMany({
       where: { usuarioId, momento: { gte: inicio, lt: fim } },
       orderBy: { momento: "asc" },
@@ -82,6 +84,7 @@ export async function pendenciasDoFuncionario(usuarioId: string, janelaDias = JA
       },
       select: { dia: true },
     }),
+    folgasMarcadas([usuarioId], ate).then((m) => m.get(usuarioId)),
   ]);
 
   const porDia = new Map<string, typeof registros>();
@@ -100,6 +103,7 @@ export async function pendenciasDoFuncionario(usuarioId: string, janelaDias = JA
       toleranciaMinutos: config.toleranciaMinutos,
       abono: abonoDoDia(ausencias, dia),
       hoje,
+      folgaSemanal: folgaNoDia(folgas, dia),
     });
     if (!jornada.pendencia) continue;
     dias.push({
