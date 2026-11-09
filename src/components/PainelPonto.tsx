@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { OrigemRegistro, TipoRegistro } from "@prisma/client";
-import { ROTULO_TIPO } from "@/lib/jornada";
+import { batidasFaltantes, listarTipos, ROTULO_TIPO } from "@/lib/jornada";
 import CameraFacial, { type ResultadoCaptura } from "./CameraFacial";
 import { EtiquetaTipo } from "./Etiquetas";
+import PedidoBatidaFaltante from "./PedidoBatidaFaltante";
 
 type RegistroLocal = {
   id: string;
@@ -28,12 +29,15 @@ export default function PainelPonto({
   salvarFoto,
   registrosIniciais,
   fuso,
+  escala,
 }: {
   tipoSugerido: TipoRegistro;
   exigeLocalizacao: boolean;
   salvarFoto: boolean;
   registrosIniciais: RegistroLocal[];
   fuso: string;
+  /** Escala de hoje, para sugerir o horário da batida que faltou. */
+  escala: { entrada: string; saida: string };
 }) {
   const router = useRouter();
   const [tipo, setTipo] = useState<TipoRegistro>(tipoSugerido);
@@ -41,10 +45,18 @@ export default function PainelPonto({
   const [ocupado, setOcupado] = useState(false);
   const [registros, setRegistros] = useState(registrosIniciais);
   const [erro, setErro] = useState<string | null>(null);
-  const [sucesso, setSucesso] = useState<{ rotulo: string; hora: string; aviso: string | null } | null>(
-    null,
-  );
+  const [sucesso, setSucesso] = useState<{
+    rotulo: string;
+    hora: string;
+    dia: string;
+    aviso: string | null;
+    faltando: TipoRegistro[];
+  } | null>(null);
   const [relogio, setRelogio] = useState<string>("");
+
+  const ultimoHoje =
+    [...registros].sort((a, b) => a.momento.localeCompare(b.momento)).at(-1)?.tipo ?? null;
+  const faltandoAntes = batidasFaltantes(ultimoHoje, tipo);
 
   useEffect(() => {
     const tick = () =>
@@ -88,7 +100,13 @@ export default function PainelPonto({
         return;
       }
 
-      setSucesso({ rotulo: dados.registro.rotulo, hora: dados.registro.hora, aviso: dados.aviso });
+      setSucesso({
+        rotulo: dados.registro.rotulo,
+        hora: dados.registro.hora,
+        dia: dados.registro.dia,
+        aviso: dados.aviso,
+        faltando: (dados.faltando ?? []).map((f: { tipo: TipoRegistro }) => f.tipo),
+      });
       setRegistros((atual) => [
         ...atual,
         {
@@ -147,6 +165,14 @@ export default function PainelPonto({
             ))}
           </div>
 
+          {faltandoAntes.length > 0 && (
+            <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              Você ainda não registrou {listarTipos(faltandoAntes)} hoje. Pode registrar{" "}
+              {ROTULO_TIPO[tipo].toLowerCase()} assim mesmo — em seguida dá para pedir o ajuste do
+              horário que faltou.
+            </p>
+          )}
+
           {!camera && (
             <button onClick={() => setCamera(true)} className="botao-primario mt-4 w-full py-3 text-base">
               📷 Registrar {ROTULO_TIPO[tipo].toLowerCase()}
@@ -180,6 +206,14 @@ export default function PainelPonto({
             {sucesso.rotulo} registrada às {sucesso.hora}
           </p>
           {sucesso.aviso && <p className="mt-1 text-sm text-amber-700">{sucesso.aviso}</p>}
+          {sucesso.faltando.length > 0 && (
+            <PedidoBatidaFaltante
+              key={`${sucesso.dia}-${sucesso.hora}`}
+              dia={sucesso.dia}
+              faltando={sucesso.faltando}
+              escala={escala}
+            />
+          )}
         </div>
       )}
 

@@ -31,7 +31,7 @@ export type Pendencia = "SEM_REGISTRO" | "INCOMPLETO";
 
 export const ROTULO_PENDENCIA: Record<Pendencia, string> = {
   SEM_REGISTRO: "sem nenhuma batida",
-  INCOMPLETO: "falta entrada ou saída",
+  INCOMPLETO: "falta alguma batida",
 };
 
 export type JornadaDoDia = {
@@ -62,6 +62,8 @@ export type JornadaDoDia = {
   diaUtil: boolean;
   /** Escala aplicada ao dia (horario proprio do dia ou padrao do funcionario). */
   escala: EscalaDoDia;
+  /** Folga que veio do painel de folgas, e nao do horario fixo. */
+  folgaSemanal: boolean;
   /** O dia realmente cobra jornada (util, sem abono e depois da admissao). */
   cobra: boolean;
   /** Ausencia validada que abonou o dia. */
@@ -91,6 +93,8 @@ export type OpcoesJornada = {
    * pendente: o dia corrente ainda vai receber batidas e nao pode ser cobrado.
    */
   hoje?: string;
+  /** O painel de folgas marcou (ou herdou) folga neste dia. */
+  folgaSemanal?: boolean;
 };
 
 /**
@@ -135,7 +139,11 @@ export function calcularJornada(
   }
 
   const emAndamento = abertoEm !== null;
-  const escala = escalaDoDia(usuario, usuario.horarios, diaSemanaNumero(dia));
+  const escalaFixa = escalaDoDia(usuario, usuario.horarios, diaSemanaNumero(dia));
+  // A folga do painel so tira o dia; nao cria expediente onde o horario fixo
+  // ja nao tinha. Nos demais dias vale a escala de sempre.
+  const folgaSemanal = !!opcoes.folgaSemanal && escalaFixa.trabalha;
+  const escala = folgaSemanal ? { ...escalaFixa, trabalha: false } : escalaFixa;
   const diaUtil = escala.trabalha;
 
   // Intervalo não batido: a loja prefere que a equipe saia para o almoço sem
@@ -183,7 +191,12 @@ export function calcularJornada(
   let pendencia: Pendencia | null = null;
   if (cobra && opcoes.hoje && dia < opcoes.hoje) {
     if (ordenados.length === 0) pendencia = "SEM_REGISTRO";
-    else if (!primeiraEntradaReg || !ultimaSaidaReg || emAndamento) pendencia = "INCOMPLETO";
+    // A sequência quebrada também conta: com a batida fora de ordem aceita,
+    // um dia com entrada e saída mas sem o retorno do almoço precisa
+    // aparecer como pendente, ou o buraco no meio passa despercebido.
+    else if (!primeiraEntradaReg || !ultimaSaidaReg || emAndamento || inconsistente) {
+      pendencia = "INCOMPLETO";
+    }
   }
 
   const saldo = ordenados.length === 0 && previsto === 0 ? 0 : trabalhado - previsto;
@@ -204,6 +217,7 @@ export function calcularJornada(
     intervaloPresumido,
     diaUtil,
     escala,
+    folgaSemanal,
     cobra,
     abono,
     antesDaAdmissao,
@@ -236,32 +250,49 @@ export function proximoTipo(registros: RegistroSimples[]): TipoRegistro {
 }
 
 /**
- * Valida se a batida faz sentido depois da anterior.
- * Devolve `null` quando esta ok ou a mensagem de impedimento.
+ * Batidas que deveriam ter vindo antes desta, dada a última do dia.
+ *
+ * Esquecer a entrada não pode impedir a pessoa de registrar o resto do dia:
+ * barrar a saída para o almoço só porque a entrada não foi batida fazia o dia
+ * inteiro sumir do ponto. Então a batida é aceita, e o que faltou volta para
+ * a tela — para a pessoa pedir o ajuste daquele horário na hora, enquanto
+ * ainda lembra quando chegou.
+ *
+ * Lista vazia quando a sequência está em ordem.
  */
-export function validarSequencia(
+export function batidasFaltantes(
   ultimo: TipoRegistro | null,
   novo: TipoRegistro,
-): string | null {
+): TipoRegistro[] {
   const trabalhando = ultimo === "ENTRADA" || ultimo === "FIM_INTERVALO";
   const emIntervalo = ultimo === "INICIO_INTERVALO";
+  const fora = !trabalhando && !emIntervalo;
 
   switch (novo) {
     case "ENTRADA":
-      if (trabalhando) return "Você já registrou a entrada. Registre a saída antes de entrar de novo.";
-      if (emIntervalo) return "Você está em intervalo. Use “Retorno do intervalo”.";
-      return null;
+      if (trabalhando) return ["SAIDA"];
+      if (emIntervalo) return ["FIM_INTERVALO", "SAIDA"];
+      return [];
     case "INICIO_INTERVALO":
-      if (!trabalhando) return "Registre a entrada antes de sair para o intervalo.";
-      return null;
+      if (fora) return ["ENTRADA"];
+      if (emIntervalo) return ["FIM_INTERVALO"];
+      return [];
     case "FIM_INTERVALO":
-      if (!emIntervalo) return "Não há intervalo em aberto para encerrar.";
-      return null;
+      if (fora) return ["ENTRADA", "INICIO_INTERVALO"];
+      if (trabalhando) return ["INICIO_INTERVALO"];
+      return [];
     case "SAIDA":
-      if (emIntervalo) return "Registre o retorno do intervalo antes da saída.";
-      if (!trabalhando) return "Registre a entrada antes de registrar a saída.";
-      return null;
+      if (fora) return ["ENTRADA"];
+      if (emIntervalo) return ["FIM_INTERVALO"];
+      return [];
   }
+}
+
+/** "Entrada", "Entrada e Saída p/ intervalo" — para avisos em frase. */
+export function listarTipos(tipos: TipoRegistro[]): string {
+  const rotulos = tipos.map((t) => ROTULO_TIPO[t]);
+  if (rotulos.length <= 1) return rotulos.join("");
+  return `${rotulos.slice(0, -1).join(", ")} e ${rotulos[rotulos.length - 1]}`;
 }
 
 /** Situacao atual do funcionario, para o painel do admin. */

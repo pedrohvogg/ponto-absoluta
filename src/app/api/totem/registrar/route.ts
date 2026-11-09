@@ -5,8 +5,10 @@ import { totemDaApi } from "@/lib/auth";
 import { obterConfig } from "@/lib/config";
 import { confiancaPercentual, descriptorValido } from "@/lib/face";
 import { dentroDaCerca as avaliarCerca, distanciaMetros } from "@/lib/geo";
-import { diaBr, diaDe, horaDe, limitesDoDia } from "@/lib/datas";
-import { ROTULO_TIPO, validarSequencia } from "@/lib/jornada";
+import { diaBr, diaDe, diaSemanaCurto, diaSemanaNumero, horaDe, limitesDoDia } from "@/lib/datas";
+import type { TipoRegistro } from "@prisma/client";
+import { batidasFaltantes, ROTULO_TIPO } from "@/lib/jornada";
+import { escalaDoDia } from "@/lib/escala";
 import { identificarNoTotem, MENSAGEM_TOTEM } from "@/lib/totem";
 import { pendenciasParaTotem } from "@/lib/pendencias";
 import { agenteDaRequisicao, ipDaRequisicao } from "@/lib/requisicao";
@@ -114,8 +116,9 @@ export async function POST(req: Request) {
     }
   }
 
-  const problema = validarSequencia(ultimo?.tipo ?? null, dados.tipo);
-  if (problema) return NextResponse.json({ erro: problema }, { status: 409 });
+  // Fora de ordem não barra mais: a batida entra e o que faltou volta na
+  // resposta, para a tela abrir o pedido de ajuste ali mesmo.
+  const faltando = batidasFaltantes(ultimo?.tipo ?? null, dados.tipo);
 
   // ---- 5. Grava ----
   const foto = config.salvarFoto && dados.foto && dados.foto.length <= MAX_FOTO ? dados.foto : null;
@@ -146,6 +149,39 @@ export async function POST(req: Request) {
   // dias em aberto diz só a quantidade; o detalhe fica com o responsável.
   const emAberto = await pendenciasParaTotem(funcionario.id);
 
+  // O pedido da batida que faltou hoje precisa de um horário sugerido, e o
+  // mais provável é o da escala da pessoa para este dia da semana.
+  let hoje: {
+    dia: string;
+    diaBr: string;
+    diaSemana: string;
+    entradaPrevista: string;
+    saidaPrevista: string;
+    faltando: { tipo: TipoRegistro; rotulo: string }[];
+  } | null = null;
+  if (faltando.length > 0) {
+    const horarios = await prisma.horarioDia.findMany({
+      where: { usuarioId: funcionario.id },
+      select: {
+        diaSemana: true,
+        trabalha: true,
+        entrada: true,
+        saida: true,
+        intervaloMinutos: true,
+        cargaMinutos: true,
+      },
+    });
+    const escala = escalaDoDia(funcionario, horarios, diaSemanaNumero(dia));
+    hoje = {
+      dia,
+      diaBr: diaBr(dia),
+      diaSemana: diaSemanaCurto(dia),
+      entradaPrevista: escala.entrada,
+      saidaPrevista: escala.saida,
+      faltando: faltando.map((t) => ({ tipo: t, rotulo: ROTULO_TIPO[t] })),
+    };
+  }
+
   return NextResponse.json({
     ok: true,
     funcionario: {
@@ -164,6 +200,7 @@ export async function POST(req: Request) {
     // A proposta do administrador precisa do de-acordo da pessoa, e ela está
     // autenticada pelo rosto agora — é o único momento em que dá para pedir.
     propostas: emAberto.propostas,
+    batidasFaltantesHoje: hoje,
     aviso:
       dentroDaCerca === false
         ? `Registrado a ${distanciaDaEmpresa} m do local cadastrado da empresa.`

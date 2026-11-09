@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { totemDaApi } from "@/lib/auth";
 import { obterConfig } from "@/lib/config";
 import { descriptorValido } from "@/lib/face";
-import { hojeStr } from "@/lib/datas";
+import { hojeStr, horaDe } from "@/lib/datas";
 import { identificarNoTotem, MENSAGEM_TOTEM } from "@/lib/totem";
 import { esquemaDia, esquemaHora, primeiroErro } from "@/lib/validacao";
 import { ipDaRequisicao } from "@/lib/requisicao";
@@ -48,8 +48,17 @@ export async function POST(req: Request) {
   }
 
   const config = await obterConfig();
-  if (dados.dia > hojeStr(config.fusoHorario)) {
+  const hoje = hojeStr(config.fusoHorario);
+  if (dados.dia > hoje) {
     return NextResponse.json({ erro: "Não dá para pedir ajuste de um dia futuro." }, { status: 400 });
+  }
+  // O pedido de hoje nasce logo depois da batida: um horário que ainda não
+  // chegou é engano de digitação, não batida esquecida.
+  if (dados.dia === hoje && dados.horario > horaDe(new Date(), config.fusoHorario)) {
+    return NextResponse.json(
+      { erro: "Esse horário ainda não chegou. Confira a hora da batida que faltou." },
+      { status: 400 },
+    );
   }
 
   const resultado = await identificarNoTotem(dados.descriptor, config, dados.matricula ?? null);
@@ -61,19 +70,22 @@ export async function POST(req: Request) {
   }
   const { funcionario } = resultado;
 
-  // Um toque a mais no botão não pode virar dois pedidos para o mesmo dia: o
-  // administrador veria pedidos repetidos sem saber qual é o válido.
+  // Um toque a mais no botão não pode virar dois pedidos da mesma batida: o
+  // administrador veria pedidos repetidos sem saber qual é o válido. Batidas
+  // diferentes do mesmo dia são pedidos diferentes — quem esqueceu a entrada e
+  // a saída para o almoço precisa pedir as duas.
   const jaExiste = await prisma.solicitacao.findFirst({
     where: {
       usuarioId: funcionario.id,
       dia: dados.dia,
+      tipo: dados.tipo,
       status: { in: ["PENDENTE", "AGUARDANDO_FUNCIONARIO"] },
     },
     select: { id: true },
   });
   if (jaExiste) {
     return NextResponse.json(
-      { erro: "Já existe um pedido em análise para esse dia." },
+      { erro: "Já existe um pedido em análise para essa batida nesse dia." },
       { status: 409 },
     );
   }

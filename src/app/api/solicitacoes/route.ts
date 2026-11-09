@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { usuarioDaApi } from "@/lib/auth";
-import { hojeStr } from "@/lib/datas";
+import { hojeStr, horaDe } from "@/lib/datas";
 import { obterConfig } from "@/lib/config";
 import { esquemaDia, esquemaHora, primeiroErro } from "@/lib/validacao";
 
@@ -36,8 +36,15 @@ export async function POST(req: Request) {
   const dados = parse.data;
   const config = await obterConfig();
 
-  if (dados.dia > hojeStr(config.fusoHorario)) {
+  const hoje = hojeStr(config.fusoHorario);
+  if (dados.dia > hoje) {
     return NextResponse.json({ erro: "Não é possível pedir ajuste para uma data futura." }, { status: 400 });
+  }
+  if (dados.dia === hoje && dados.horario && dados.horario > horaDe(new Date(), config.fusoHorario)) {
+    return NextResponse.json(
+      { erro: "Esse horário ainda não chegou. Confira a hora da batida." },
+      { status: 400 },
+    );
   }
 
   if (dados.registroAlvoId) {

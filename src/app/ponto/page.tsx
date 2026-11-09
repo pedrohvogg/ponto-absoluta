@@ -6,6 +6,8 @@ import { diaBr, diaSemanaCurto, hojeStr, limitesDoDia, minutosParaHoras } from "
 import { calcularJornada, proximoTipo } from "@/lib/jornada";
 import { abonoDoDia, ROTULO_AUSENCIA } from "@/lib/ausencia";
 import { pendenciasDoFuncionario } from "@/lib/pendencias";
+import { folgaNoDia } from "@/lib/folgas";
+import { folgasMarcadas } from "@/lib/folgasSalvas";
 import Cabecalho from "@/components/Cabecalho";
 import PainelPonto from "@/components/PainelPonto";
 import AlertaPendencias from "@/components/AlertaPendencias";
@@ -18,7 +20,7 @@ export default async function PaginaPonto() {
   const dia = hojeStr(config.fusoHorario);
   const { inicio, fim } = limitesDoDia(dia, config.fusoHorario);
 
-  const [usuario, registros, biometrias, ausenciasHoje, pendencias] = await Promise.all([
+  const [usuario, registros, biometrias, ausenciasHoje, pendencias, folgas] = await Promise.all([
     prisma.usuario.findUniqueOrThrow({
       where: { id: sessao.id },
       select: {
@@ -53,6 +55,7 @@ export default async function PaginaPonto() {
       select: { id: true, tipo: true, inicio: true, fim: true, status: true },
     }),
     pendenciasDoFuncionario(sessao.id),
+    folgasMarcadas([sessao.id], dia).then((m) => m.get(sessao.id)),
   ]);
 
   const abono = abonoDoDia(ausenciasHoje, dia);
@@ -61,6 +64,7 @@ export default async function PaginaPonto() {
     toleranciaMinutos: config.toleranciaMinutos,
     abono,
     hoje: dia,
+    folgaSemanal: folgaNoDia(folgas, dia),
   });
 
   return (
@@ -143,6 +147,7 @@ export default async function PaginaPonto() {
               dentroDaCerca: r.dentroDaCerca,
             }))}
             fuso={config.fusoHorario}
+            escala={{ entrada: jornada.escala.entrada, saida: jornada.escala.saida }}
           />
         )}
 

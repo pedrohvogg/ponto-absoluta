@@ -170,7 +170,7 @@ function CartaoDiasEmAberto({ dias }: { dias: DiaEmAberto[] }) {
                 <p className="text-xs text-slate-500">
                   {d.motivo === "SEM_REGISTRO"
                     ? `Nenhuma batida. Previsto ${d.entradaPrevista}–${d.saidaPrevista}.`
-                    : `Registrado: ${d.batidas.map((b) => b.hora).join(", ")} — falta entrada ou saída.`}
+                    : `Registrado: ${d.batidas.map((b) => b.hora).join(", ")} — falta alguma batida.`}
                 </p>
               </div>
               {d.jaSolicitado ? (
